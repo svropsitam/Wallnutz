@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Стіна повідомлень</title>
+<style>
+:root{--bg:#e9e4d8;--paper:#f7f4ec;--ink:#1d2a2a;--mute:#6b7473;--line:#c9c2b0;--acc:#1f5f5b;--warn:#a23b2a}
+@media(prefers-color-scheme:dark){:root{--bg:#161c1c;--paper:#1f2727;--ink:#e6e9e4;--mute:#8d9a98;--line:#33403f;--acc:#6fc2bb;--warn:#e07a66}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Georgia,'Times New Roman',serif}
+header{position:sticky;top:0;z-index:5;display:flex;gap:10px;align-items:center;padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--line)}
+header h1{font-size:20px;margin:0;flex:1;font-weight:600}
+button,input,textarea{font:inherit;color:inherit}
+button{background:var(--acc);color:var(--paper);border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+#wall{columns:300px;column-gap:14px;padding:16px;max-width:1200px;margin:auto}
+.msg{break-inside:avoid;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:12px;margin:0 0 14px}
+.meta{display:flex;justify-content:space-between;color:var(--mute);font-size:13px;margin-bottom:6px;gap:8px}
+.code{font-family:ui-monospace,Consolas,monospace;cursor:pointer}
+.text{white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.text.open{display:block}
+.att{margin-top:8px}.att img,.att video{max-width:100%;border-radius:3px;display:block}.att audio{width:100%}
+.att pre{max-height:160px;overflow:auto;background:var(--bg);padding:6px;margin:4px 0;font-size:12px}
+.att a{color:var(--acc);font-size:14px}.fn{font-size:12px;color:var(--mute)}
+dialog{background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;width:min(480px,94vw);padding:16px}
+dialog::backdrop{background:#0008}
+dialog h2{margin:0;font-size:18px}
+.dhead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px}
+.numtag{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--line);border-radius:6px;padding:1px 2px 1px 8px;font-size:13px;background:var(--bg);white-space:nowrap}
+.cp-ico{background:transparent;color:var(--mute);border:0;padding:2px 6px;font-size:15px;line-height:1;border-radius:4px}
+.cp-ico:hover{color:var(--acc)}
+textarea,input[type=text],input[type=password]{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
+textarea{min-height:110px;resize:vertical}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.row label{display:flex;gap:6px;align-items:center}
+.chips span{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:13px}
+#err{color:var(--warn);min-height:1.4em;font-size:14px}
+#empty{text-align:center;color:var(--mute);padding:40px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Стіна повідомлень</h1>
+  <button id="bSearch" class="ghost">Пошук</button>
+  <button id="bNew" aria-label="Нове повідомлення">+ Нове</button>
+</header>
+<main><div id="wall"></div><div id="empty" hidden>Поки що немає відкритих повідомлень.</div></main>
+
+<dialog id="dNew">
+  <div class="dhead">
+    <h2>Нове повідомлення</h2>
+    <span class="numtag" title="Номер повідомлення"><span class="code" id="newCode"></span><button class="cp-ico" id="copyNew" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button></span>
+  </div>
+  <textarea id="txt" maxlength="2000" placeholder="Текст повідомлення"></textarea>
+  <div class="row"><button class="ghost" id="bAtt" title="Прикріпити файл">📎 Файл</button><input type="file" id="file" multiple hidden>
+    <div class="chips" id="chips"></div></div>
+  <div class="row"><label><input type="checkbox" id="pub" checked> Відкрите (видно на стіні)</label></div>
+  <div class="row"><label><input type="checkbox" id="aes"> Шифрувати AES-256 (лише за номером)</label></div>
+  <input type="password" id="pw" placeholder="Пароль для шифрування" hidden autocomplete="new-password">
+  <div id="err"></div>
+  <div class="row" style="justify-content:flex-end"><button class="ghost" id="cNew">Скасувати</button><button id="send">Надіслати</button></div>
+</dialog>
+
+<dialog id="dSearch">
+  <h2>Пошук за номером</h2>
+  <input type="text" id="qCode" placeholder="Номер повідомлення (XXXXX-XXXXX)" autocomplete="off">
+  <input type="password" id="qPw" placeholder="Пароль (якщо зашифроване)" style="margin-top:8px" autocomplete="off">
+  <div id="serr" style="color:var(--warn);min-height:1.4em;font-size:14px;margin-top:6px"></div>
+  <div id="res"></div>
+  <div class="row" style="justify-content:flex-end"><button class="ghost" id="cSearch">Закрити</button><button id="go">Знайти</button></div>
+</dialog>
+
+<dialog id="dDone"><h2>Надіслано</h2><p>Номер повідомлення:</p><p class="code" id="doneCode" style="font-size:22px"></p>
+  <p class="fn">Збережіть його: для прихованих і зашифрованих повідомлень це єдиний спосіб їх знайти.</p>
+  <div class="row" style="justify-content:flex-end"><button class="ghost" id="copyCode">Копіювати</button><button id="okDone">Гаразд</button></div></dialog>
+
+<script>
+// ===== НАЛАШТУВАННЯ =====
+const DB_URL = "https://wall-nutz-default-rtdb.europe-west1.firebasedatabase.app";                 // напр. https://my-project-default-rtdb.europe-west1.firebasedatabase.app
+const RETENTION_DAYS = 1;          // скільки днів зберігати повідомлення (має збігатися з правилами БД)
+const WALL_LIMIT = 30;             // скільки останніх відкритих повідомлень показувати
+const POLL_MS = 5000;              // період оновлення стіни
+const MAX_TOTAL_B64 = 6_000_000;   // ліміт сумарного розміру вкладень (після стиснення, base64)
+// =========================
+
+const $ = id => document.getElementById(id);
+const dbBase = () => {
+  let u = DB_URL || localStorage.getItem('dburl');
+  if (!u) { u = prompt('Адреса Realtime Database (https://....firebasedatabase.app):') || ''; if (u) localStorage.setItem('dburl', u.trim()); }
+  return u.trim().replace(/\/+$/, '');
+};
+async function api(path, method = 'GET', body) {
+  const r = await fetch(dbBase() + '/' + path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error('БД: ' + r.status + ' ' + (await r.text()).slice(0, 120));
+  return r.json();
+}
+const SV = { '.sv': 'timestamp' };
+
+// ---- байти / base64 / стиснення ----
+const toB64 = u8 => { let s = '', n = 0x8000; for (let i = 0; i < u8.length; i += n) s += String.fromCharCode.apply(null, u8.subarray(i, i + n)); return btoa(s); };
+const fromB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const pipe = async (u8, T) => new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new T)).arrayBuffer());
+const gz = u8 => pipe(u8, class extends CompressionStream { constructor() { super('gzip'); } });
+const ungz = u8 => pipe(u8, class extends DecompressionStream { constructor() { super('gzip'); } });
+
+async function packFile(f) {
+  const raw = new Uint8Array(await f.arrayBuffer());
+  const z = await gz(raw);
+  const useZ = z.length < raw.length;
+  return { name: f.name, type: f.type || 'application/octet-stream', size: f.size, c: useZ ? 1 : 0, d: toB64(useZ ? z : raw) };
+}
+
+// ---- номер повідомлення та ключ у БД (хеш, щоб приховані номери не були видимі в БД) ----
+const ALPH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function genCode() { const a = crypto.getRandomValues(new Uint8Array(10)); const s = [...a].map(x => ALPH[x % 32]).join(''); return s.slice(0, 5) + '-' + s.slice(5); }
+const normCode = s => s.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/(.{5})(.*)/, '$1-$2');
+async function keyOf(code) { const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('msg:' + code)); return [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join(''); }
+
+// ---- AES-GCM (PBKDF2) ----
+async function aesKey(pw, salt) {
+  const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function encryptPayload(obj, pw) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const plain = await gz(new TextEncoder().encode(JSON.stringify(obj)));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(pw, salt), plain));
+  return { enc: 1, s: toB64(salt), iv: toB64(iv), d: toB64(ct) };
+}
+async function decryptPayload(node, pw) {
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(node.iv) }, await aesKey(pw, fromB64(node.s)), fromB64(node.d));
+  return JSON.parse(new TextDecoder().decode(await ungz(new Uint8Array(pt))));
+}
+
+// ---- очищення старих повідомлень ----
+async function cleanup() {
+  try {
+    const cutoff = Date.now() - RETENTION_DAYS * 86400000;
+    const old = await api('idx.json?orderBy="$value"&endAt=' + cutoff);
+    const keys = Object.keys(old || {}); if (!keys.length) return;
+    const upd = {}; keys.forEach(k => { upd['pub/' + k] = null; upd['priv/' + k] = null; upd['blob/' + k] = null; upd['idx/' + k] = null; });
+    await api('.json', 'PATCH', upd);
+  } catch (e) { console.warn('cleanup', e); }
+}
+
+// ---- відображення ----
+const fmt = t => new Date(t).toLocaleString('uk-UA');
+async function showFile(box, f, getData) {
+  const el = document.createElement('div'); el.className = 'att'; box.appendChild(el);
+  el.innerHTML = '<span class="fn">⏳ ' + esc(f.name) + '</span>';
+  try {
+    let u8 = fromB64(await getData()); if (f.c) u8 = await ungz(u8);
+    const blob = new Blob([u8], { type: f.type }), url = URL.createObjectURL(blob), t = f.type;
+    el.innerHTML = '';
+    if (t.startsWith('image/')) { const i = new Image(); i.src = url; i.alt = f.name; el.appendChild(i); }
+    else if (t.startsWith('video/')) { const v = document.createElement('video'); v.src = url; v.controls = true; el.appendChild(v); }
+    else if (t.startsWith('audio/')) { const a = document.createElement('audio'); a.src = url; a.controls = true; el.appendChild(a); }
+    else if (t.startsWith('text/') && u8.length < 20000) { const p = document.createElement('pre'); p.textContent = new TextDecoder().decode(u8); el.appendChild(p); }
+    const a = document.createElement('a'); a.href = url; a.download = f.name; a.textContent = '⬇ ' + f.name + ' (' + Math.ceil(f.size / 1024) + ' КБ, ' + t + ')'; el.appendChild(a);
+  } catch (e) { el.textContent = 'Не вдалося завантажити ' + f.name; }
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function renderMsg(m, getData) {
+  const d = document.createElement('article'); d.className = 'msg';
+  d.innerHTML = '<div class="meta"><span><span class="code"></span><button class="cp-ico cp" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button></span><span>' + fmt(m.t) + '</span></div><div class="text"></div>';
+  d.querySelector('.code').textContent = '№ ' + (m.n || '—');
+  const cp = d.querySelector('.cp'); if (m.n) cp.onclick = () => copyText(m.n, cp); else cp.remove();
+  const tx = d.querySelector('.text'); tx.textContent = m.text || ''; tx.onclick = () => tx.classList.toggle('open');
+  if (!m.text) tx.remove();
+  (m.files || []).forEach((f, i) => showFile(d, f, () => getData(i, f)));
+  return d;
+}
+
+// ---- стіна ----
+const shown = new Map();
+async function refreshWall() {
+  try {
+    const data = await api('pub.json?orderBy="t"&limitToLast=' + WALL_LIMIT) || {};
+    const wall = $('wall'), entries = Object.entries(data).sort((a, b) => b[1].t - a[1].t);
+    for (const [k, el] of shown) if (!data[k]) { el.remove(); shown.delete(k); }
+    for (const [k, m] of entries.reverse()) {
+      if (shown.has(k)) continue;
+      const el = renderMsg(m, i => api('blob/' + k + '/' + i + '.json'));
+      shown.set(k, el); wall.prepend(el);
+    }
+    $('empty').hidden = shown.size > 0;
+  } catch (e) { console.warn(e); }
+}
+
+// ---- нове повідомлення ----
+let files = [], curCode = '';
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+  if (btn) { const o = btn.textContent, ico = btn.classList.contains('cp-ico'); btn.textContent = ico ? '✓' : 'Скопійовано ✓'; setTimeout(() => btn.textContent = o, 1500); }
+}
+$('bNew').onclick = () => { $('err').textContent = ''; curCode = genCode(); $('newCode').textContent = curCode; $('dNew').showModal(); };
+$('copyNew').onclick = e => copyText(curCode, e.currentTarget);
+$('cNew').onclick = () => $('dNew').close();
+$('bAtt').onclick = () => $('file').click();
+$('file').onchange = e => { files.push(...e.target.files); e.target.value = ''; drawChips(); };
+function drawChips() { $('chips').innerHTML = files.map((f, i) => '<span>' + esc(f.name) + ' <a href="#" data-i="' + i + '" style="text-decoration:none">✕</a></span>').join(''); }
+$('chips').onclick = e => { const i = e.target.dataset?.i; if (i !== undefined) { e.preventDefault(); files.splice(+i, 1); drawChips(); } };
+$('aes').onchange = () => { const on = $('aes').checked; $('pw').hidden = !on; $('pub').disabled = on; if (on) $('pub').checked = false; };
+
+$('send').onclick = async () => {
+  const err = $('err'), btn = $('send'); err.textContent = '';
+  const text = $('txt').value.trim(), isEnc = $('aes').checked, isPub = $('pub').checked && !isEnc;
+  if (!text && !files.length) { err.textContent = 'Додайте текст або файл.'; return; }
+  if (isEnc && $('pw').value.length < 4) { err.textContent = 'Пароль має містити щонайменше 4 символи.'; return; }
+  btn.disabled = true; err.textContent = 'Стискаю та надсилаю…';
+  try {
+    const packed = []; let total = 0;
+    for (const f of files) { const p = await packFile(f); total += p.d.length; packed.push(p); }
+    if (total > MAX_TOTAL_B64) throw new Error('Вкладення завеликі (ліміт ≈ ' + Math.round(MAX_TOTAL_B64 / 1.37e6) + ' МБ після стиснення).');
+    const code = curCode, k = await keyOf(code), upd = { ['idx/' + k]: SV };
+    if (isEnc) upd['priv/' + k] = { t: SV, ...(await encryptPayload({ n: code, text, files: packed }, $('pw').value)) };
+    else if (isPub) {
+      upd['pub/' + k] = { t: SV, n: code, text, files: packed.map(({ d, ...meta }) => meta) };
+      packed.forEach((p, i) => upd['blob/' + k + '/' + i] = p.d);
+    } else upd['priv/' + k] = { t: SV, n: code, text, files: packed };
+    await api('.json', 'PATCH', upd);
+    $('dNew').close(); $('txt').value = ''; $('pw').value = ''; files = []; drawChips(); err.textContent = '';
+    $('doneCode').textContent = code; $('dDone').showModal();
+    await cleanup(); refreshWall();
+  } catch (e) { err.textContent = e.message; }
+  btn.disabled = false;
+};
+$('copyCode').onclick = e => copyText($('doneCode').textContent, e.currentTarget);
+$('okDone').onclick = () => $('dDone').close();
+
+// ---- пошук ----
+$('bSearch').onclick = () => { $('serr').textContent = ''; $('res').innerHTML = ''; $('dSearch').showModal(); };
+$('cSearch').onclick = () => $('dSearch').close();
+$('go').onclick = async () => {
+  const err = $('serr'), res = $('res'); err.textContent = ''; res.innerHTML = '';
+  const code = normCode($('qCode').value.trim());
+  if (code.length < 11) { err.textContent = 'Введіть повний номер.'; return; }
+  try {
+    const k = await keyOf(code);
+    const [p, q] = await Promise.all([api('pub/' + k + '.json'), api('priv/' + k + '.json')]);
+    if (p) { res.appendChild(renderMsg(p, i => api('blob/' + k + '/' + i + '.json'))); return; }
+    if (!q) { err.textContent = 'Повідомлення не знайдено (можливо, його вже видалено).'; return; }
+    if (q.enc) {
+      if (!$('qPw').value) { err.textContent = 'Повідомлення зашифроване — введіть пароль.'; return; }
+      let m; try { m = await decryptPayload(q, $('qPw').value); } catch { err.textContent = 'Невірний пароль.'; return; }
+      res.appendChild(renderMsg({ ...m, t: q.t }, i => m.files[i].d));
+    } else res.appendChild(renderMsg(q, i => q.files[i].d));
+  } catch (e) { err.textContent = e.message; }
+};
+$('qCode').onkeydown = $('qPw').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
+
+// ---- старт ----
+refreshWall(); setInterval(() => { if (!document.hidden) refreshWall(); }, POLL_MS);
+</script>
+</body>
+</html>
