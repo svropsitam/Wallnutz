@@ -51,7 +51,7 @@ textarea{min-height:110px;resize:vertical}
 <dialog id="dNew">
   <div class="dhead">
     <h2>Нове повідомлення</h2>
-    <span class="numtag" title="Номер повідомлення"><span class="code" id="newCode"></span><button class="cp-ico" id="copyNew" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button></span>
+    <span class="numtag" title="Номер повідомлення"><span class="code" id="newCode"></span><button class="cp-ico" id="copyNew" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button><button class="cp-ico" id="qrNew" type="button" aria-label="QR-код номера" title="QR-код номера">▦</button></span>
   </div>
   <textarea id="txt" maxlength="2000" placeholder="Текст повідомлення"></textarea>
   <div class="row"><button class="ghost" id="bAtt" title="Прикріпити файл">📎 Файл</button><input type="file" id="file" multiple hidden>
@@ -72,9 +72,19 @@ textarea{min-height:110px;resize:vertical}
   <div class="row" style="justify-content:flex-end"><button class="ghost" id="cSearch">Закрити</button><button id="go">Знайти</button></div>
 </dialog>
 
-<dialog id="dDone"><h2>Надіслано</h2><p>Номер повідомлення:</p><p class="code" id="doneCode" style="font-size:22px"></p>
-  <p class="fn">Збережіть його: для прихованих і зашифрованих повідомлень це єдиний спосіб їх знайти.</p>
-  <div class="row" style="justify-content:flex-end"><button class="ghost" id="copyCode">Копіювати</button><button id="okDone">Гаразд</button></div></dialog>
+<dialog id="dDone"><h2>Надіслано</h2>
+  <p class="fn" style="margin:10px 0 0">Номер повідомлення:</p>
+  <p style="margin:2px 0"><span class="code" id="doneCode" style="font-size:22px"></span> <button class="cp-ico" id="copyCode" type="button" title="Копіювати номер">⧉</button></p>
+  <p class="fn" style="margin:10px 0 0">Код видалення (покажіть лише тому, кому довіряєте):</p>
+  <p style="margin:2px 0"><span class="code" id="doneDel" style="font-size:22px"></span> <button class="cp-ico" id="copyDel" type="button" title="Копіювати код видалення">⧉</button></p>
+  <p class="fn">Збережіть обидва: приховані й зашифровані повідомлення знаходяться лише за номером, а код видалення відновити неможливо.</p>
+  <div class="row" style="justify-content:flex-end"><button id="okDone">Гаразд</button></div></dialog>
+
+<dialog id="dQR" style="width:min(300px,92vw);text-align:center">
+  <canvas id="qrCv" style="width:240px;height:240px;image-rendering:pixelated;background:#fff"></canvas>
+  <p class="code" id="qrCode" style="font-size:18px;margin:6px 0"></p>
+  <div class="row" style="justify-content:center"><a id="qrDl" download="qr.png" class="fn">Зберегти PNG</a><button class="ghost" id="qrClose" type="button">Закрити</button></div>
+</dialog>
 
 <script>
 // ===== НАЛАШТУВАННЯ =====
@@ -140,7 +150,7 @@ async function cleanup() {
     const cutoff = Date.now() - RETENTION_DAYS * 86400000;
     const old = await api('idx.json?orderBy="$value"&endAt=' + cutoff);
     const keys = Object.keys(old || {}); if (!keys.length) return;
-    const upd = {}; keys.forEach(k => { upd['pub/' + k] = null; upd['priv/' + k] = null; upd['blob/' + k] = null; upd['idx/' + k] = null; });
+    const upd = {}; keys.forEach(k => { upd['pub/' + k] = null; upd['priv/' + k] = null; upd['blob/' + k] = null; upd['secret/' + k] = null; upd['idx/' + k] = null; });
     await api('.json', 'PATCH', upd);
   } catch (e) { console.warn('cleanup', e); }
 }
@@ -162,9 +172,21 @@ async function showFile(box, f, getData) {
   } catch (e) { el.textContent = 'Не вдалося завантажити ' + f.name; }
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-function renderMsg(m, getData) {
+async function deleteMsg(m, kind, card) {
+  const dc = normDel(prompt('Введіть код видалення:') || '');
+  if (!dc) return;
+  try {
+    const k = await keyOf(m.n);
+    const tomb = kind === 'pub' ? { t: m.t, n: m.n, text: '', gone: dc } : { t: m.t, gone: dc };
+    await api(kind + '/' + k + '.json', 'PUT', tomb);          // правила приймають запис лише з правильним кодом
+    api('.json', 'PATCH', { ['blob/' + k]: null }).catch(() => {});
+    card.remove(); shown.delete(k);
+  } catch (e) { alert(/40[13]|Permission/.test(e.message) ? 'Невірний код видалення.' : e.message); }
+}
+function renderMsg(m, getData, kind) {
   const d = document.createElement('article'); d.className = 'msg';
-  d.innerHTML = '<div class="meta"><span><span class="code"></span><button class="cp-ico cp" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button></span><span>' + fmt(m.t) + '</span></div><div class="text"></div>';
+  d.innerHTML = '<div class="meta"><span><span class="code"></span><button class="cp-ico cp" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button></span><span>' + fmt(m.t) + ' <button class="cp-ico del" type="button" aria-label="Видалити" title="Видалити (потрібен код видалення)">✕</button></span></div><div class="text"></div>';
+  const del = d.querySelector('.del'); if (m.n && kind) del.onclick = () => deleteMsg(m, kind, d); else del.remove();
   d.querySelector('.code').textContent = '№ ' + (m.n || '—');
   const cp = d.querySelector('.cp'); if (m.n) cp.onclick = () => copyText(m.n, cp); else cp.remove();
   const tx = d.querySelector('.text'); tx.textContent = m.text || ''; tx.onclick = () => tx.classList.toggle('open');
@@ -178,11 +200,11 @@ const shown = new Map();
 async function refreshWall() {
   try {
     const data = await api('pub.json?orderBy="t"&limitToLast=' + WALL_LIMIT) || {};
-    const wall = $('wall'), entries = Object.entries(data).sort((a, b) => b[1].t - a[1].t);
-    for (const [k, el] of shown) if (!data[k]) { el.remove(); shown.delete(k); }
+    const wall = $('wall'), entries = Object.entries(data).filter(([, m]) => !m.gone).sort((a, b) => b[1].t - a[1].t);
+    for (const [k, el] of shown) if (!data[k] || data[k].gone) { el.remove(); shown.delete(k); }
     for (const [k, m] of entries.reverse()) {
       if (shown.has(k)) continue;
-      const el = renderMsg(m, i => api('blob/' + k + '/' + i + '.json'));
+      const el = renderMsg(m, i => api('blob/' + k + '/' + i + '.json'), 'pub');
       shown.set(k, el); wall.prepend(el);
     }
     $('empty').hidden = shown.size > 0;
@@ -196,8 +218,60 @@ async function copyText(text, btn) {
   catch { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
   if (btn) { const o = btn.textContent, ico = btn.classList.contains('cp-ico'); btn.textContent = ico ? '✓' : 'Скопійовано ✓'; setTimeout(() => btn.textContent = o, 1500); }
 }
-$('bNew').onclick = () => { $('err').textContent = ''; curCode = genCode(); $('newCode').textContent = curCode; $('dNew').showModal(); };
+let curDel = '';
+const genDel = () => { const a = crypto.getRandomValues(new Uint8Array(8)); const s = [...a].map(x => ALPH[x % 32]).join(''); return s.slice(0, 4) + '-' + s.slice(4); };
+const normDel = s => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+$('bNew').onclick = () => { $('err').textContent = ''; curCode = genCode(); curDel = genDel(); $('newCode').textContent = curCode; $('dNew').showModal(); };
 $('copyNew').onclick = e => copyText(curCode, e.currentTarget);
+
+// ---- QR (версія 1, корекція M, до 14 байт) ----
+function qrMatrix(text) {
+  const N = 21, bytes = [...new TextEncoder().encode(text)];
+  if (bytes.length > 14) throw new Error('Занадто довгий текст для QR');
+  const bits = [], push = (v, n) => { for (let i = n - 1; i >= 0; i--) bits.push((v >>> i) & 1); };
+  push(4, 4); push(bytes.length, 8); bytes.forEach(b => push(b, 8)); push(0, Math.min(4, 128 - bits.length));
+  while (bits.length % 8) bits.push(0);
+  const data = []; for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+  for (let p = 0; data.length < 16; p++) data.push(p % 2 ? 0x11 : 0xEC);
+  const mul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; } return z; };
+  const deg = 10, div = new Array(deg - 1).fill(0); div.push(1);
+  for (let r = 1, i = 0; i < deg; i++) { for (let j = 0; j < deg; j++) { div[j] = mul(div[j], r); if (j + 1 < deg) div[j] ^= div[j + 1]; } r = mul(r, 2); }
+  const ec = new Array(deg).fill(0);
+  for (const b of data) { const f = b ^ ec.shift(); ec.push(0); div.forEach((c, i) => ec[i] ^= mul(c, f)); }
+  const cw = data.concat(ec);
+  const m = Array.from({ length: N }, () => new Array(N).fill(false)), fn = Array.from({ length: N }, () => new Array(N).fill(false));
+  const set = (x, y, v) => { m[y][x] = v; fn[y][x] = true; };
+  for (let i = 0; i < N; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  for (const [cx, cy] of [[3, 3], [N - 4, 3], [3, N - 4]])
+    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy)); if (x >= 0 && x < N && y >= 0 && y < N) set(x, y, d !== 2 && d !== 4); }
+  const F = 0x5412, fb = i => ((F >>> i) & 1) === 1;
+  for (let i = 0; i <= 5; i++) set(8, i, fb(i));
+  set(8, 7, fb(6)); set(8, 8, fb(7)); set(7, 8, fb(8));
+  for (let i = 9; i < 15; i++) set(14 - i, 8, fb(i));
+  for (let i = 0; i < 8; i++) set(N - 1 - i, 8, fb(i));
+  for (let i = 8; i < 15; i++) set(8, N - 15 + i, fb(i));
+  set(8, N - 8, true);
+  let k = 0;
+  for (let right = N - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let v = 0; v < N; v++) for (let j = 0; j < 2; j++) {
+      const x = right - j, y = ((right + 1) & 2) === 0 ? N - 1 - v : v;
+      if (!fn[y][x] && k < cw.length * 8) { m[y][x] = ((cw[k >>> 3] >>> (7 - (k & 7))) & 1) === 1; k++; }
+    }
+  }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (!fn[y][x] && (x + y) % 2 === 0) m[y][x] = !m[y][x];
+  return m;
+}
+function showQR(text) {
+  const m = qrMatrix(text), N = m.length, q = 4, s = 8, cv = $('qrCv');
+  cv.width = cv.height = (N + 2 * q) * s;
+  const c = cv.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height); c.fillStyle = '#000';
+  m.forEach((row, y) => row.forEach((v, x) => v && c.fillRect((x + q) * s, (y + q) * s, s, s)));
+  $('qrCode').textContent = text; $('qrDl').href = cv.toDataURL('image/png'); $('qrDl').download = 'qr-' + text + '.png';
+  $('dQR').showModal();
+}
+$('qrNew').onclick = () => showQR(curCode);
+$('qrClose').onclick = () => $('dQR').close();
 $('cNew').onclick = () => $('dNew').close();
 $('bAtt').onclick = () => $('file').click();
 $('file').onchange = e => { files.push(...e.target.files); e.target.value = ''; drawChips(); };
@@ -215,7 +289,7 @@ $('send').onclick = async () => {
     const packed = []; let total = 0;
     for (const f of files) { const p = await packFile(f); total += p.d.length; packed.push(p); }
     if (total > MAX_TOTAL_B64) throw new Error('Вкладення завеликі (ліміт ≈ ' + Math.round(MAX_TOTAL_B64 / 1.37e6) + ' МБ після стиснення).');
-    const code = curCode, k = await keyOf(code), upd = { ['idx/' + k]: SV };
+    const code = curCode, k = await keyOf(code), upd = { ['idx/' + k]: SV, ['secret/' + k]: normDel(curDel) };
     if (isEnc) upd['priv/' + k] = { t: SV, ...(await encryptPayload({ n: code, text, files: packed }, $('pw').value)) };
     else if (isPub) {
       upd['pub/' + k] = { t: SV, n: code, text, files: packed.map(({ d, ...meta }) => meta) };
@@ -223,12 +297,13 @@ $('send').onclick = async () => {
     } else upd['priv/' + k] = { t: SV, n: code, text, files: packed };
     await api('.json', 'PATCH', upd);
     $('dNew').close(); $('txt').value = ''; $('pw').value = ''; files = []; drawChips(); err.textContent = '';
-    $('doneCode').textContent = code; $('dDone').showModal();
+    $('doneCode').textContent = code; $('doneDel').textContent = curDel; $('dDone').showModal();
     await cleanup(); refreshWall();
   } catch (e) { err.textContent = e.message; }
   btn.disabled = false;
 };
 $('copyCode').onclick = e => copyText($('doneCode').textContent, e.currentTarget);
+$('copyDel').onclick = e => copyText($('doneDel').textContent, e.currentTarget);
 $('okDone').onclick = () => $('dDone').close();
 
 // ---- пошук ----
@@ -241,13 +316,14 @@ $('go').onclick = async () => {
   try {
     const k = await keyOf(code);
     const [p, q] = await Promise.all([api('pub/' + k + '.json'), api('priv/' + k + '.json')]);
-    if (p) { res.appendChild(renderMsg(p, i => api('blob/' + k + '/' + i + '.json'))); return; }
+    if (p?.gone || q?.gone) { err.textContent = 'Це повідомлення видалено.'; return; }
+    if (p) { res.appendChild(renderMsg(p, i => api('blob/' + k + '/' + i + '.json'), 'pub')); return; }
     if (!q) { err.textContent = 'Повідомлення не знайдено (можливо, його вже видалено).'; return; }
     if (q.enc) {
       if (!$('qPw').value) { err.textContent = 'Повідомлення зашифроване — введіть пароль.'; return; }
       let m; try { m = await decryptPayload(q, $('qPw').value); } catch { err.textContent = 'Невірний пароль.'; return; }
-      res.appendChild(renderMsg({ ...m, t: q.t }, i => m.files[i].d));
-    } else res.appendChild(renderMsg(q, i => q.files[i].d));
+      res.appendChild(renderMsg({ ...m, t: q.t }, i => m.files[i].d, 'priv'));
+    } else res.appendChild(renderMsg(q, i => (q.files || [])[i].d, 'priv'));
   } catch (e) { err.textContent = e.message; }
 };
 $('qCode').onkeydown = $('qPw').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
