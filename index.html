@@ -92,7 +92,7 @@ const DB_URL = "https://wall-nutz-default-rtdb.europe-west1.firebasedatabase.app
 const RETENTION_DAYS = 1;          // скільки днів зберігати повідомлення (має збігатися з правилами БД)
 const WALL_LIMIT = 30;             // скільки останніх відкритих повідомлень показувати
 const POLL_MS = 5000;              // період оновлення стіни
-const MAX_TOTAL_B64 = 6_000_000;   // ліміт сумарного розміру вкладень (після стиснення, base64)
+const CHUNK = 900_000;             // розмір одного шматка файлу (символів base64, ≈ 0,66 МБ); ліміту на розмір файлу немає
 // =========================
 
 const $ = id => document.getElementById(id);
@@ -144,6 +144,29 @@ async function decryptPayload(node, pw) {
   return JSON.parse(new TextDecoder().decode(await ungz(new Uint8Array(pt))));
 }
 
+// ---- шматки: blob/<ключ>/<файл>/<індекс шматка> ----
+const nChunks = s => Math.ceil(s.length / CHUNK);
+async function retry(fn, n = 3) { for (let a = 1; ; a++) { try { return await fn(); } catch (e) { if (a >= n) throw e; await new Promise(r => setTimeout(r, 800 * a)); } } }
+async function uploadChunks(k, items, say) {
+  const all = [];
+  items.forEach(({ i, d }) => { for (let j = 0, p = 0; p < d.length; j++, p += CHUNK) all.push(['blob/' + k + '/' + i + '/' + j, d.slice(p, p + CHUNK)]); });
+  let batch = {}, size = 0, done = 0;
+  const flush = async () => { if (!size) return; const b = batch; batch = {}; size = 0; await retry(() => api('.json', 'PATCH', b)); say?.('Завантажено ' + done + ' з ' + all.length + ' частин…'); };
+  for (const [path, s] of all) { batch[path] = s; size += s.length; done++; if (size >= 3_000_000) await flush(); }
+  await flush();
+}
+async function fetchChunks(k, i, cn, prog) {
+  const out = new Array(cn); let next = 0, got = 0;
+  await Promise.all(Array.from({ length: Math.min(4, cn) }, async () => {
+    while (next < cn) {
+      const j = next++, s = await retry(() => api('blob/' + k + '/' + i + '/' + j + '.json'));
+      if (s == null) throw new Error('Відсутній шматок ' + (j + 1) + '/' + cn);
+      out[j] = s; prog?.(++got, cn);
+    }
+  }));
+  return out.join('');
+}
+
 // ---- очищення старих повідомлень ----
 async function cleanup() {
   try {
@@ -160,8 +183,9 @@ const fmt = t => new Date(t).toLocaleString('uk-UA');
 async function showFile(box, f, getData) {
   const el = document.createElement('div'); el.className = 'att'; box.appendChild(el);
   el.innerHTML = '<span class="fn">⏳ ' + esc(f.name) + '</span>';
+  const sp = el.firstChild, prog = (a, b) => sp.textContent = '⏳ ' + f.name + ' ' + a + '/' + b;
   try {
-    let u8 = fromB64(await getData()); if (f.c) u8 = await ungz(u8);
+    let u8 = fromB64(await getData(prog)); if (f.c) u8 = await ungz(u8);
     const blob = new Blob([u8], { type: f.type }), url = URL.createObjectURL(blob), t = f.type;
     el.innerHTML = '';
     if (t.startsWith('image/')) { const i = new Image(); i.src = url; i.alt = f.name; el.appendChild(i); }
@@ -191,7 +215,7 @@ function renderMsg(m, getData, kind) {
   const cp = d.querySelector('.cp'); if (m.n) cp.onclick = () => copyText(m.n, cp); else cp.remove();
   const tx = d.querySelector('.text'); tx.textContent = m.text || ''; tx.onclick = () => tx.classList.toggle('open');
   if (!m.text) tx.remove();
-  (m.files || []).forEach((f, i) => showFile(d, f, () => getData(i, f)));
+  (m.files || []).forEach((f, i) => showFile(d, f, prog => getData(i, f, prog)));
   return d;
 }
 
@@ -204,7 +228,7 @@ async function refreshWall() {
     for (const [k, el] of shown) if (!data[k] || data[k].gone) { el.remove(); shown.delete(k); }
     for (const [k, m] of entries.reverse()) {
       if (shown.has(k)) continue;
-      const el = renderMsg(m, i => api('blob/' + k + '/' + i + '.json'), 'pub');
+      const el = renderMsg(m, (i, f, p) => fetchChunks(k, i, f.cn || 0, p), 'pub');
       shown.set(k, el); wall.prepend(el);
     }
     $('empty').hidden = shown.size > 0;
@@ -286,16 +310,20 @@ $('send').onclick = async () => {
   if (isEnc && $('pw').value.length < 4) { err.textContent = 'Пароль має містити щонайменше 4 символи.'; return; }
   btn.disabled = true; err.textContent = 'Стискаю та надсилаю…';
   try {
-    const packed = []; let total = 0;
-    for (const f of files) { const p = await packFile(f); total += p.d.length; packed.push(p); }
-    if (total > MAX_TOTAL_B64) throw new Error('Вкладення завеликі (ліміт ≈ ' + Math.round(MAX_TOTAL_B64 / 1.37e6) + ' МБ після стиснення).');
-    const code = curCode, k = await keyOf(code), upd = { ['idx/' + k]: SV, ['secret/' + k]: normDel(curDel) };
-    if (isEnc) upd['priv/' + k] = { t: SV, ...(await encryptPayload({ n: code, text, files: packed }, $('pw').value)) };
-    else if (isPub) {
-      upd['pub/' + k] = { t: SV, n: code, text, files: packed.map(({ d, ...meta }) => meta) };
-      packed.forEach((p, i) => upd['blob/' + k + '/' + i] = p.d);
-    } else upd['priv/' + k] = { t: SV, n: code, text, files: packed };
-    await api('.json', 'PATCH', upd);
+    const packed = [];
+    for (const f of files) { err.textContent = 'Стискаю ' + f.name + '…'; packed.push(await packFile(f)); }
+    const code = curCode, k = await keyOf(code);
+    await api('.json', 'PATCH', { ['idx/' + k]: SV, ['secret/' + k]: normDel(curDel) });  // спершу індекс: якщо завантаження перерветься, сміття прибере автоочищення
+    let node, items;
+    if (isEnc) {
+      const e = await encryptPayload({ n: code, text, files: packed }, $('pw').value);
+      items = [{ i: 0, d: e.d }]; node = { t: SV, enc: 1, s: e.s, iv: e.iv, cn: nChunks(e.d) };
+    } else {
+      items = packed.map((p, i) => ({ i, d: p.d }));
+      node = { t: SV, n: code, text, files: packed.map(({ d, ...meta }) => ({ ...meta, cn: nChunks(d) })) };
+    }
+    await uploadChunks(k, items, msg => err.textContent = msg);
+    await api((isPub ? 'pub/' : 'priv/') + k + '.json', 'PUT', node);                  // повідомлення з'являється лише коли всі шматки на місці
     $('dNew').close(); $('txt').value = ''; $('pw').value = ''; files = []; drawChips(); err.textContent = '';
     $('doneCode').textContent = code; $('doneDel').textContent = curDel; $('dDone').showModal();
     await cleanup(); refreshWall();
@@ -317,13 +345,15 @@ $('go').onclick = async () => {
     const k = await keyOf(code);
     const [p, q] = await Promise.all([api('pub/' + k + '.json'), api('priv/' + k + '.json')]);
     if (p?.gone || q?.gone) { err.textContent = 'Це повідомлення видалено.'; return; }
-    if (p) { res.appendChild(renderMsg(p, i => api('blob/' + k + '/' + i + '.json'), 'pub')); return; }
+    if (p) { res.appendChild(renderMsg(p, (i, f, pr) => fetchChunks(k, i, f.cn || 0, pr), 'pub')); return; }
     if (!q) { err.textContent = 'Повідомлення не знайдено (можливо, його вже видалено).'; return; }
     if (q.enc) {
       if (!$('qPw').value) { err.textContent = 'Повідомлення зашифроване — введіть пароль.'; return; }
-      let m; try { m = await decryptPayload(q, $('qPw').value); } catch { err.textContent = 'Невірний пароль.'; return; }
+      err.textContent = 'Завантажую…';
+      const qd = { ...q, d: await fetchChunks(k, 0, q.cn || 0) }; err.textContent = '';
+      let m; try { m = await decryptPayload(qd, $('qPw').value); } catch { err.textContent = 'Невірний пароль.'; return; }
       res.appendChild(renderMsg({ ...m, t: q.t }, i => m.files[i].d, 'priv'));
-    } else res.appendChild(renderMsg(q, i => (q.files || [])[i].d, 'priv'));
+    } else res.appendChild(renderMsg(q, (i, f, pr) => fetchChunks(k, i, f.cn || 0, pr), 'priv'));
   } catch (e) { err.textContent = e.message; }
 };
 $('qCode').onkeydown = $('qPw').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
