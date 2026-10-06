@@ -42,6 +42,7 @@ main{padding-bottom:56px}
 .xbtn button:hover{background:#fff4}.xbtn .xx:hover{background:#c0392b;color:#fff}
 .xwin iframe{flex:1;min-height:0;width:100%;border:0;background:#fff}
 .xwin:not(.act) iframe,.xwin.drag iframe{pointer-events:none}
+.xerr{flex:none;max-height:64px;overflow:auto;padding:3px 8px;background:#fdecea;color:#a23b2a;font-size:12px}.xerr[hidden]{display:none}
 .xwin.min{display:none}
 .xwin.max{left:0!important;top:0!important;width:100%!important;height:calc(100% - var(--tray))!important;border-radius:0}
 .xwin.max .rz{display:none}.xwin.max .xbar{cursor:default}
@@ -211,7 +212,14 @@ async function cleanup() {
 // ---- відображення ----
 const fmt = t => new Date(t).toLocaleString('uk-UA');
 // ---- HTML+JS вікно: пісочниця без доступу до сторінки та без мережі ----
-const CSP = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\'; style-src \'unsafe-inline\'; img-src data: blob:; media-src data: blob:; font-src data:">';
+const EXEC_DATA = true;             // true: вікна вантажаться через data:-URL (обхід успадкування CSP сторінки); при блокуванні автоматично повертається до srcdoc
+let dataBlocked = false;
+document.addEventListener('securitypolicyviolation', e => { if (dataBlocked || !/^data/.test(e.blockedURI)) return; dataBlocked = true; document.querySelectorAll('.xwin').forEach(w => w._data && w._run()); });
+const EXEC_NET = false;            // true: дозволити https-скрипти/CDN/fetch усередині вікон (зручніше, але менш безпечно)
+const ERRJS = 'addEventListener("error",function(e){parent.postMessage({xerr:e.message+" ("+(e.lineno||0)+")"},"*")});addEventListener("securitypolicyviolation",function(e){parent.postMessage({xerr:"CSP заблокував: "+e.blockedURI+" ("+e.violatedDirective+")"},"*")});addEventListener("unhandledrejection",function(e){parent.postMessage({xerr:"Promise: "+e.reason},"*")});';
+const CSP = '<meta http-equiv="Content-Security-Policy" content="' + (EXEC_NET
+  ? "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; media-src data: blob: https:; font-src data: https:; connect-src https:"
+  : "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:") + '"><script>' + ERRJS + '<\/script>';
 function withCsp(h) {
   const m = h.match(/<head[^>]*>/i);
   if (m) return h.replace(m[0], m[0] + CSP);
@@ -234,15 +242,22 @@ function clampWin(w) {
   w.style.top = Math.min(Math.max(parseFloat(w.style.top) || 0, 0), innerHeight - 80) + 'px';
 }
 addEventListener('resize', () => desk.querySelectorAll('.xwin').forEach(clampWin));
+addEventListener('message', e => { if (!e.data?.xerr) return; desk.querySelectorAll('.xwin').forEach(w => { if (w.querySelector('iframe').contentWindow === e.source) { const x = w.querySelector('.xerr'); x.hidden = false; x.textContent = '⚠ ' + String(e.data.xerr).slice(0, 300); } }); });
 function createWin(code, name, o = {}) {
   const w = document.createElement('div'); w.className = 'xwin';
-  w.innerHTML = '<div class="xbar"><span class="xt"></span><span class="xbtn"><button type="button" class="xc" title="Копіювати код">⧉</button><button type="button" class="xr" title="Перезапустити">↻</button><button type="button" class="xn" title="Згорнути">—</button><button type="button" class="xm" title="Розгорнути / відновити">▢</button><button type="button" class="xx" title="Закрити">✕</button></span></div><iframe sandbox="allow-scripts" title="HTML-вікно"></iframe>'
+  w.innerHTML = '<div class="xbar"><span class="xt"></span><span class="xbtn"><button type="button" class="xc" title="Копіювати код">⧉</button><button type="button" class="xr" title="Перезапустити">↻</button><button type="button" class="xn" title="Згорнути">—</button><button type="button" class="xm" title="Розгорнути / відновити">▢</button><button type="button" class="xx" title="Закрити">✕</button></span></div><iframe sandbox="allow-scripts" title="HTML-вікно"></iframe><div class="xerr" hidden></div>'
     + ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(d => '<i class="rz rz-' + d + '" data-d="' + d + '"></i>').join('');
   const q = s => w.querySelector(s);
   q('.xt').textContent = name;
   const W = Math.min(440, innerWidth - 24), H = Math.min(340, Math.round(innerHeight * .55)), k = winN++ % 8;
   w.style.cssText = 'width:' + W + 'px;height:' + H + 'px;left:' + Math.max(8, Math.min(innerWidth - W - 8, 16 + k * 28)) + 'px;top:' + Math.min(64 + k * 28, innerHeight - H - 56 > 8 ? innerHeight - H - 56 : 8) + 'px';
-  const fr = q('iframe'), run = () => { fr.srcdoc = withCsp(code); };
+  const fr = q('iframe'), run = () => {
+    q('.xerr').hidden = true;
+    const html = withCsp(code);
+    if (EXEC_DATA && !dataBlocked && html.length < 1_400_000) { fr.removeAttribute('srcdoc'); fr.src = 'data:text/html;base64,' + toB64(new TextEncoder().encode(html)); w._data = true; }
+    else { fr.removeAttribute('src'); fr.srcdoc = html; w._data = false; }
+  };
+  w._run = run;
   const tb = document.createElement('button'); tb.type = 'button'; tb.className = 'tb'; tb.textContent = name; tb._w = w; tray.appendChild(tb); tray.hidden = false;
   const restore = () => { w.classList.remove('min'); focusWin(w); };
   const minimize = () => { w.classList.add('min'); w.classList.remove('act'); tb.classList.remove('on'); };
