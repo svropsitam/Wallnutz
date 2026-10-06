@@ -31,6 +31,14 @@ dialog h2{margin:0;font-size:18px}
 .numtag{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--line);border-radius:6px;padding:1px 2px 1px 8px;font-size:13px;background:var(--bg);white-space:nowrap}
 .cp-ico{background:transparent;color:var(--mute);border:0;padding:2px 6px;font-size:15px;line-height:1;border-radius:4px}
 .cp-ico:hover{color:var(--acc)}
+.xwin{position:relative;width:100%;max-width:100%;min-width:180px;height:260px;margin-top:8px;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
+.xbar{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:2px 4px 2px 8px;background:var(--bg);color:var(--mute);font-size:12px;flex:none}
+.xt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xwin iframe{flex:1;min-height:0;width:100%;border:0;background:#fff}
+.xwin.drag iframe{pointer-events:none}
+.xgrip{position:absolute;right:0;bottom:0;width:28px;height:28px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 48%,#888 48%,#888 56%,transparent 56%,transparent 68%,#888 68%,#888 76%,transparent 76%)}
+.xwin.max{position:fixed;inset:8px;z-index:30;width:auto!important;height:auto!important;max-width:none;margin:0;box-shadow:0 0 0 100vmax #000a}
+.xwin.max .xgrip{display:none}
 textarea,input[type=text],input[type=password]{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
 textarea{min-height:110px;resize:vertical}
 .row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
@@ -57,6 +65,7 @@ textarea{min-height:110px;resize:vertical}
   <div class="row"><button class="ghost" id="bAtt" title="Прикріпити файл">📎 Файл</button><input type="file" id="file" multiple hidden>
     <div class="chips" id="chips"></div></div>
   <div class="row"><label><input type="checkbox" id="pub" checked> Відкрите (видно на стіні)</label></div>
+  <div class="row"><label><input type="checkbox" id="xex"> HTML+JS: відкривати як вікно-програму</label></div>
   <div class="row"><label><input type="checkbox" id="aes"> Шифрувати AES-256 (лише за номером)</label></div>
   <input type="password" id="pw" placeholder="Пароль для шифрування" hidden autocomplete="new-password">
   <div id="err"></div>
@@ -92,6 +101,7 @@ const DB_URL = "https://wall-nutz-default-rtdb.europe-west1.firebasedatabase.app
 const RETENTION_DAYS = 1;          // скільки днів зберігати повідомлення (має збігатися з правилами БД)
 const WALL_LIMIT = 30;             // скільки останніх відкритих повідомлень показувати
 const POLL_MS = 5000;              // період оновлення стіни
+const AUTORUN_EXEC = true;         // true: HTML-вікна запускаються одразу; false: лише після натискання ↻
 const CHUNK = 900_000;             // розмір одного шматка файлу (символів base64, ≈ 0,66 МБ); ліміту на розмір файлу немає
 // =========================
 
@@ -103,7 +113,7 @@ const dbBase = () => {
 };
 async function api(path, method = 'GET', body) {
   const r = await fetch(dbBase() + '/' + path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
-  if (!r.ok) throw new Error('БД: ' + r.status + ' ' + (await r.text()).slice(0, 120));
+  if (!r.ok) throw new Error('БД: ' + r.status + ' (' + method + ' ' + path.split('?')[0].replace(/[0-9a-f]{24}/g, '…') + (body && path === '.json' ? ' ' + Object.keys(body).slice(0, 2).map(x => x.replace(/[0-9a-f]{24}/g, '…')).join(', ') : '') + ') ' + (await r.text()).slice(0, 80));
   return r.json();
 }
 const SV = { '.sv': 'timestamp' };
@@ -180,7 +190,35 @@ async function cleanup() {
 
 // ---- відображення ----
 const fmt = t => new Date(t).toLocaleString('uk-UA');
-async function showFile(box, f, getData) {
+// ---- HTML+JS вікно: пісочниця без доступу до сторінки та без мережі ----
+const CSP = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\'; style-src \'unsafe-inline\'; img-src data: blob:; media-src data: blob:; font-src data:">';
+function withCsp(h) {
+  const m = h.match(/<head[^>]*>/i);
+  if (m) return h.replace(m[0], m[0] + CSP);
+  if (/^\s*<!doctype[^>]*>/i.test(h)) return h.replace(/^(\s*<!doctype[^>]*>)/i, '$1' + CSP);
+  return '<!doctype html>' + CSP + h;
+}
+function execWindow(code, name) {
+  const w = document.createElement('div'); w.className = 'xwin';
+  w.innerHTML = '<div class="xbar"><span class="xt"></span><span><button class="cp-ico xc" type="button" title="Копіювати код">⧉</button><button class="cp-ico xr" type="button" title="Перезапустити">↻</button><button class="cp-ico xm" type="button" title="На весь екран / згорнути">⤢</button></span></div><iframe sandbox="allow-scripts" title="HTML-повідомлення"></iframe><div class="xgrip" title="Потягніть, щоб змінити розмір"></div>';
+  w.querySelector('.xt').textContent = '▶ ' + name;
+  const fr = w.querySelector('iframe'), run = () => { fr.srcdoc = withCsp(code); };
+  w.querySelector('.xr').onclick = run;
+  w.querySelector('.xc').onclick = e => copyText(code, e.currentTarget);
+  w.querySelector('.xm').onclick = () => w.classList.toggle('max');
+  const g = w.querySelector('.xgrip');
+  g.onpointerdown = e => {
+    e.preventDefault(); g.setPointerCapture(e.pointerId);
+    const r = w.getBoundingClientRect(), sx = e.clientX, sy = e.clientY; w.classList.add('drag');
+    g.onpointermove = v => { w.style.width = Math.max(180, r.width + v.clientX - sx) + 'px'; w.style.height = Math.max(140, r.height + v.clientY - sy) + 'px'; };
+    g.onpointerup = g.onpointercancel = () => { w.classList.remove('drag'); g.onpointermove = null; };
+  };
+  if (AUTORUN_EXEC) run(); else fr.srcdoc = '<body style="font:14px sans-serif;padding:12px">Натисніть ↻, щоб запустити</body>';
+  return w;
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.xwin.max').forEach(w => w.classList.remove('max')); });
+
+async function showFile(box, f, getData, x) {
   const el = document.createElement('div'); el.className = 'att'; box.appendChild(el);
   el.innerHTML = '<span class="fn">⏳ ' + esc(f.name) + '</span>';
   const sp = el.firstChild, prog = (a, b) => sp.textContent = '⏳ ' + f.name + ' ' + a + '/' + b;
@@ -191,6 +229,7 @@ async function showFile(box, f, getData) {
     if (t.startsWith('image/')) { const i = new Image(); i.src = url; i.alt = f.name; el.appendChild(i); }
     else if (t.startsWith('video/')) { const v = document.createElement('video'); v.src = url; v.controls = true; el.appendChild(v); }
     else if (t.startsWith('audio/')) { const a = document.createElement('audio'); a.src = url; a.controls = true; el.appendChild(a); }
+    else if (x && t === 'text/html') el.appendChild(execWindow(new TextDecoder().decode(u8), f.name));
     else if (t.startsWith('text/') && u8.length < 20000) { const p = document.createElement('pre'); p.textContent = new TextDecoder().decode(u8); el.appendChild(p); }
     const a = document.createElement('a'); a.href = url; a.download = f.name; a.textContent = '⬇ ' + f.name + ' (' + Math.ceil(f.size / 1024) + ' КБ, ' + t + ')'; el.appendChild(a);
   } catch (e) { el.textContent = 'Не вдалося завантажити ' + f.name; }
@@ -209,13 +248,14 @@ async function deleteMsg(m, kind, card) {
 }
 function renderMsg(m, getData, kind) {
   const d = document.createElement('article'); d.className = 'msg';
-  d.innerHTML = '<div class="meta"><span><span class="code"></span><button class="cp-ico cp" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button></span><span>' + fmt(m.t) + ' <button class="cp-ico del" type="button" aria-label="Видалити" title="Видалити (потрібен код видалення)">✕</button></span></div><div class="text"></div>';
+  d.innerHTML = '<div class="meta"><span><span class="code"></span><button class="cp-ico cp" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button></span><span>' + fmt(m.t) + ' <button class="cp-ico ct" type="button" aria-label="Копіювати текст" title="Копіювати текст">❐</button><button class="cp-ico del" type="button" aria-label="Видалити" title="Видалити (потрібен код видалення)">✕</button></span></div><div class="text"></div>';
+  const ct = d.querySelector('.ct'); if (m.text) ct.onclick = () => copyText(m.text, ct); else ct.remove();
   const del = d.querySelector('.del'); if (m.n && kind) del.onclick = () => deleteMsg(m, kind, d); else del.remove();
   d.querySelector('.code').textContent = '№ ' + (m.n || '—');
   const cp = d.querySelector('.cp'); if (m.n) cp.onclick = () => copyText(m.n, cp); else cp.remove();
   const tx = d.querySelector('.text'); tx.textContent = m.text || ''; tx.onclick = () => tx.classList.toggle('open');
   if (!m.text) tx.remove();
-  (m.files || []).forEach((f, i) => showFile(d, f, prog => getData(i, f, prog)));
+  (m.files || []).forEach((f, i) => showFile(d, f, prog => getData(i, f, prog), m.x));
   return d;
 }
 
@@ -301,30 +341,34 @@ $('bAtt').onclick = () => $('file').click();
 $('file').onchange = e => { files.push(...e.target.files); e.target.value = ''; drawChips(); };
 function drawChips() { $('chips').innerHTML = files.map((f, i) => '<span>' + esc(f.name) + ' <a href="#" data-i="' + i + '" style="text-decoration:none">✕</a></span>').join(''); }
 $('chips').onclick = e => { const i = e.target.dataset?.i; if (i !== undefined) { e.preventDefault(); files.splice(+i, 1); drawChips(); } };
+const syncX = () => { const on = $('xex').checked; if (on) $('txt').removeAttribute('maxlength'); else $('txt').maxLength = 2000; $('txt').placeholder = on ? 'Вставте HTML+JS код (або прикріпіть .html файл)' : 'Текст повідомлення'; };
+$('xex').onchange = syncX;
 $('aes').onchange = () => { const on = $('aes').checked; $('pw').hidden = !on; $('pub').disabled = on; if (on) $('pub').checked = false; };
 
 $('send').onclick = async () => {
   const err = $('err'), btn = $('send'); err.textContent = '';
-  const text = $('txt').value.trim(), isEnc = $('aes').checked, isPub = $('pub').checked && !isEnc;
+  let text = $('txt').value.trim(); const isX = $('xex').checked, isEnc = $('aes').checked, isPub = $('pub').checked && !isEnc;
   if (!text && !files.length) { err.textContent = 'Додайте текст або файл.'; return; }
   if (isEnc && $('pw').value.length < 4) { err.textContent = 'Пароль має містити щонайменше 4 символи.'; return; }
   btn.disabled = true; err.textContent = 'Стискаю та надсилаю…';
   try {
-    const packed = [];
-    for (const f of files) { err.textContent = 'Стискаю ' + f.name + '…'; packed.push(await packFile(f)); }
+    const packed = [], toPack = [...files];
+    if (isX && text) { toPack.unshift(new File([text], 'app.html', { type: 'text/html' })); text = ''; }
+    if (isX && !toPack.some(f => /\.html?$/i.test(f.name))) throw new Error('Вставте HTML-код у текст або прикріпіть .html файл.');
+    for (const f of toPack) { err.textContent = 'Стискаю ' + f.name + '…'; const p = await packFile(f); if (isX && /\.html?$/i.test(f.name)) p.type = 'text/html'; packed.push(p); }
     const code = curCode, k = await keyOf(code);
     await api('.json', 'PATCH', { ['idx/' + k]: SV, ['secret/' + k]: normDel(curDel) });  // спершу індекс: якщо завантаження перерветься, сміття прибере автоочищення
     let node, items;
     if (isEnc) {
-      const e = await encryptPayload({ n: code, text, files: packed }, $('pw').value);
+      const e = await encryptPayload({ n: code, text, files: packed, ...(isX ? { x: 1 } : {}) }, $('pw').value);
       items = [{ i: 0, d: e.d }]; node = { t: SV, enc: 1, s: e.s, iv: e.iv, cn: nChunks(e.d) };
     } else {
       items = packed.map((p, i) => ({ i, d: p.d }));
-      node = { t: SV, n: code, text, files: packed.map(({ d, ...meta }) => ({ ...meta, cn: nChunks(d) })) };
+      node = { t: SV, n: code, text, ...(isX ? { x: 1 } : {}), files: packed.map(({ d, ...meta }) => ({ ...meta, cn: nChunks(d) })) };
     }
     await uploadChunks(k, items, msg => err.textContent = msg);
     await api((isPub ? 'pub/' : 'priv/') + k + '.json', 'PUT', node);                  // повідомлення з'являється лише коли всі шматки на місці
-    $('dNew').close(); $('txt').value = ''; $('pw').value = ''; files = []; drawChips(); err.textContent = '';
+    $('dNew').close(); $('xex').checked = false; syncX(); $('txt').value = ''; $('pw').value = ''; files = []; drawChips(); err.textContent = '';
     $('doneCode').textContent = code; $('doneDel').textContent = curDel; $('dDone').showModal();
     await cleanup(); refreshWall();
   } catch (e) { err.textContent = e.message; }
