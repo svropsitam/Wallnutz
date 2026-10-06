@@ -122,7 +122,7 @@ const DB_URL = "https://wall-nutz-default-rtdb.europe-west1.firebasedatabase.app
 const RETENTION_DAYS = 1;          // скільки днів зберігати повідомлення (має збігатися з правилами БД)
 const WALL_LIMIT = 30;             // скільки останніх відкритих повідомлень показувати
 const POLL_MS = 5000;              // період оновлення стіни
-const MAX_AUTO_OPEN = 2;           // скільки вікон відкривається одразу; решта стартують згорнутими в панелі внизу
+const MAX_AUTO_OPEN = 0;           // скільки HTML-вікон відкривається одразу при завантаженні (0 = усі згорнуті в панелі внизу й не запускаються, доки їх не розгорнути)
 const AUTORUN_EXEC = true;         // true: HTML-вікна запускаються одразу; false: лише після натискання ↻
 const CHUNK = 900_000;             // розмір одного шматка файлу (символів base64, ≈ 0,66 МБ); ліміту на розмір файлу немає
 // =========================
@@ -218,11 +218,11 @@ let dataBlocked = false;
 document.addEventListener('securitypolicyviolation', e => { if (dataBlocked || !/^data/.test(e.blockedURI)) return; dataBlocked = true; document.querySelectorAll('.xwin').forEach(w => w._data && w._run()); });
 const EXEC_NET = false;            // true: дозволити https-скрипти/CDN/fetch усередині вікон (зручніше, але менш безпечно)
 const ERRJS = 'addEventListener("error",function(e){parent.postMessage({xerr:e.message+" ("+(e.lineno||0)+")"},"*")});addEventListener("securitypolicyviolation",function(e){parent.postMessage({xerr:"CSP заблокував: "+e.blockedURI+" ("+e.violatedDirective+")"},"*")});addEventListener("unhandledrejection",function(e){parent.postMessage({xerr:"Promise: "+e.reason},"*")});';
-const CSP = '<meta http-equiv="Content-Security-Policy" content="' + (EXEC_NET
-  ? "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; media-src data: blob: https:; font-src data: https:; connect-src https:"
-  : "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:") + '"><script>' + ERRJS + '<\/script>';
+const CSP = '<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + (EXEC_NET
+  ? "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; media-src data: blob: https:; font-src data: https:; connect-src https:; worker-src blob:"
+  : "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:") + '"><script>' + ERRJS + '<\/script>';
 function withCsp(h) {
-  const m = h.match(/<head[^>]*>/i);
+  const m = h.match(/<head(?:\s[^>]*)?>/i);
   if (m) return h.replace(m[0], m[0] + CSP);
   if (/^\s*<!doctype[^>]*>/i.test(h)) return h.replace(/^(\s*<!doctype[^>]*>)/i, '$1' + CSP);
   return '<!doctype html>' + CSP + h;
@@ -243,7 +243,8 @@ function clampWin(w) {
   w.style.top = Math.min(Math.max(parseFloat(w.style.top) || 0, 0), innerHeight - 80) + 'px';
 }
 addEventListener('resize', () => desk.querySelectorAll('.xwin').forEach(clampWin));
-addEventListener('message', e => { if (!e.data?.xerr) return; desk.querySelectorAll('.xwin').forEach(w => { if (w.querySelector('iframe').contentWindow === e.source) { const x = w.querySelector('.xerr'); x.hidden = false; x.textContent = '⚠ ' + String(e.data.xerr).slice(0, 300); } }); });
+const xlog = [];
+addEventListener('message', e => { if (!e.data?.xerr) return; desk.querySelectorAll('.xwin').forEach(w => { if (w.querySelector('iframe').contentWindow === e.source) { const x = w.querySelector('.xerr'); x.hidden = false; x.textContent = '⚠ ' + String(e.data.xerr).slice(0, 300); xlog.push(w._name + ': ' + String(e.data.xerr).slice(0, 200)); if (xlog.length > 20) xlog.shift(); } }); });
 function createWin(code, name, o = {}) {
   const w = document.createElement('div'); w.className = 'xwin';
   w.innerHTML = '<div class="xbar"><span class="xt"></span><span class="xbtn"><button type="button" class="xc" title="Копіювати код">⧉</button><button type="button" class="xr" title="Перезапустити">↻</button><button type="button" class="xn" title="Згорнути">—</button><button type="button" class="xm" title="Розгорнути / відновити">▢</button><button type="button" class="xx" title="Закрити">✕</button></span></div><iframe sandbox="allow-scripts" title="HTML-вікно"></iframe><div class="xerr" hidden></div>'
@@ -255,12 +256,12 @@ function createWin(code, name, o = {}) {
   const fr = q('iframe'), run = () => {
     q('.xerr').hidden = true;
     const html = withCsp(code);
-    if (EXEC_DATA && !dataBlocked && html.length < 1_400_000) { fr.removeAttribute('srcdoc'); fr.src = 'data:text/html;base64,' + toB64(new TextEncoder().encode(html)); w._data = true; }
+    if (EXEC_DATA && !dataBlocked && html.length < 1_400_000) { fr.removeAttribute('srcdoc'); fr.src = 'data:text/html;charset=utf-8;base64,' + toB64(new TextEncoder().encode(html)); w._data = true; }
     else { fr.removeAttribute('src'); fr.srcdoc = html; w._data = false; }
   };
-  w._run = run;
+  w._run = run; w._code = code; w._name = name;
   const tb = document.createElement('button'); tb.type = 'button'; tb.className = 'tb'; tb.textContent = name; tb._w = w; tray.appendChild(tb); tray.hidden = false;
-  const restore = () => { w.classList.remove('min'); focusWin(w); };
+  const restore = () => { w.classList.remove('min'); if (w._lazy) { w._lazy = false; run(); } focusWin(w); };
   const minimize = () => { w.classList.add('min'); w.classList.remove('act'); tb.classList.remove('on'); };
   tb.onclick = () => (w.classList.contains('min') || !w.classList.contains('act')) ? restore() : minimize();
   q('.xr').onclick = run;
@@ -291,8 +292,9 @@ function createWin(code, name, o = {}) {
     };
     h.onpointerup = h.onpointercancel = () => { w.classList.remove('drag'); h.onpointermove = null; };
   });
-  desk.appendChild(w); run();
-  if (o.auto && visWins().length > MAX_AUTO_OPEN) minimize(); else focusWin(w);
+  w._restore = restore;
+  desk.appendChild(w);
+  if (o.auto && visWins().length > MAX_AUTO_OPEN) { minimize(); w._lazy = true; } else { run(); focusWin(w); }
   return w;
 }
 function execLauncher(code, name) {
@@ -301,10 +303,10 @@ function execLauncher(code, name) {
   el.firstChild.textContent = '▣ ' + name;
   let win = null; const btn = el.querySelector('button');
   const open = auto => {
-    if (win?.isConnected) { win.classList.remove('min'); focusWin(win); return; }
-    el.closest('dialog')?.close();                      // модальне вікно пошуку перекривало б робочий стіл
-    win = createWin(code, name, { auto, onClose: () => { btn.textContent = 'Відкрити вікно'; } });
-    btn.textContent = 'Показати вікно';
+    if (win?.isConnected) { win._restore(); return; }
+    const inDlg = el.closest('dialog'); inDlg?.close();                      // модальне вікно пошуку перекривало б робочий стіл
+    win = createWin(code, name, { auto: auto && !inDlg, onClose: () => { btn.textContent = 'Відкрити вікно'; } });
+    btn.textContent = 'Розгорнути вікно';
   };
   btn.onclick = () => open(false);
   el.start = () => { if (AUTORUN_EXEC) open(true); };
@@ -496,25 +498,69 @@ $('go').onclick = async () => {
 };
 $('qCode').onkeydown = $('qPw').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
 
-// ---- діагностика CSP ----
+// ---- діагностика: що працює й що блокується у вікнах ----
+function probeBody(mode) {
+  const R = [], t = (n, f) => { try { const v = f(); R.push([n, true, v === undefined ? '' : String(v)]); } catch (e) { R.push([n, false, String((e && e.name) || e).slice(0, 40)]); } };
+  t('eval / new Function', () => new Function('return 1')());
+  t('eval()', () => eval('1+1'));
+  t('WebAssembly', () => { new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])); return 'ok'; });
+  t('localStorage', () => localStorage.getItem('x'));
+  t('sessionStorage', () => sessionStorage.getItem('x'));
+  t('indexedDB', () => { indexedDB.open('t'); });
+  t('cookie', () => document.cookie);
+  t('Worker (blob)', () => { const w = new Worker(URL.createObjectURL(new Blob(['0']))); w.terminate(); });
+  t('crypto.subtle', () => { if (!crypto.subtle) throw 'немає'; });
+  t('буфер обміну', () => { if (!navigator.clipboard) throw 'немає'; });
+  t('безпечний контекст', () => { if (!isSecureContext) throw 'ні'; });
+  let done = false; const end = () => { if (!done) { done = true; parent.postMessage({ diag: mode, r: R }, '*'); } };
+  try { fetch('https://www.gstatic.com/generate_204', { mode: 'no-cors' }).then(() => { R.push(['мережа (fetch на https)', true, '']); end(); }, () => { R.push(['мережа (fetch на https)', false, 'заблоковано']); end(); }); }
+  catch (e) { R.push(['мережа (fetch на https)', false, String(e)]); end(); }
+  setTimeout(end, 1500);
+}
 const probe = mode => new Promise(res => {
   const f = document.createElement('iframe'); f.sandbox = 'allow-scripts'; f.hidden = true;
-  const h = withCsp('<script>var r="дозволено";try{new Function("return 1")()}catch(e){r="ЗАБЛОКОВАНО"}parent.postMessage({diag:"' + mode + '",r:r},"*")<\/script>');
+  const h = withCsp('<script>(' + probeBody.toString() + ')("' + mode + '")<\/script>');
   const done = r => { removeEventListener('message', on); f.remove(); res(r); };
   const on = e => { if (e.source === f.contentWindow && e.data?.diag) done(e.data.r); };
-  addEventListener('message', on); setTimeout(() => done('не відповіло (фрейм заблоковано?)'), 2500);
+  addEventListener('message', on); setTimeout(() => done(null), 3500);
   document.body.appendChild(f);
-  if (mode === 'data') f.src = 'data:text/html;base64,' + toB64(new TextEncoder().encode(h)); else f.srcdoc = h;
+  if (mode === 'data') f.src = 'data:text/html;charset=utf-8;base64,' + toB64(new TextEncoder().encode(h)); else f.srcdoc = h;
 });
+const SCAN = [
+  [/\beval\s*\(/, 'eval() — потребує дозволу eval'],
+  [/new\s+Function\s*\(/, 'new Function() — потребує дозволу eval'],
+  [/set(Timeout|Interval)\s*\(\s*['"`]/, 'setTimeout/setInterval з рядком — потребує дозволу eval'],
+  [/http-equiv\s*=\s*["']?content-security-policy/i, 'власний <meta> CSP у коді — може заборонити eval чи скрипти'],
+  [/<script[^>]+src\s*=\s*["']?(https?:)?\/\//i, 'зовнішній <script src> — блокується (немає мережі)'],
+  [/<link[^>]+href\s*=\s*["']?(https?:)?\/\//i, 'зовнішній <link> (стилі/шрифти) — блокується'],
+  [/\b(fetch|XMLHttpRequest|WebSocket|EventSource)\b/, 'мережеві запити — блокуються (EXEC_NET=true дозволяє https)'],
+  [/\b(localStorage|sessionStorage|indexedDB)\b/, 'localStorage/IndexedDB — недоступні в пісочниці; без try/catch скрипт падає'],
+  [/\b(alert|confirm|prompt)\s*\(/, 'alert/confirm/prompt — заблоковано пісочницею'],
+  [/window\.open|target\s*=\s*["']?_blank/, 'window.open / _blank — заблоковано'],
+  [/<form\b/i, '<form> — відправка заблокована'],
+  [/\bimport\s*\(|<script[^>]+type\s*=\s*["']?module/i, 'ES-модулі / import() — зовнішні модулі блокуються']
+];
+const fmtProbe = (title, r) => title + ':\n' + (!r ? '  ✗ вікно не відповіло — фрейм заблоковано (CSP сторінки: frame-src?)' : r.map(([n, ok, d]) => '  ' + (ok ? '✓ ' : '✗ ') + n + (d ? ' — ' + d : '')).join('\n'));
 $('bDiag').onclick = async () => {
-  const out = $('diagOut'), L = []; out.textContent = 'Перевіряю…'; $('dDiag').showModal();
+  const out = $('diagOut'), P = [], L = []; let hdr = '';
+  const show = () => { out.textContent = hdr + (P.length ? '\n\n' + P.join('\n\n') : ''); };
+  $('dDiag').showModal(); out.textContent = 'Перевіряю…';
+  L.push('Адреса: ' + location.origin + (isSecureContext ? ' (безпечний контекст)' : ' (НЕбезпечний контекст)'));
   try { new Function('return 1')(); L.push('Сторінка: eval дозволено'); } catch { L.push('Сторінка: eval ЗАБЛОКОВАНО'); }
   L.push('<meta> CSP у сторінці: ' + (document.querySelector('meta[http-equiv="Content-Security-Policy" i]') ? 'є' : 'немає'));
   try { const r = await fetch(location.href, { method: 'HEAD', cache: 'no-store' }); L.push('Заголовок CSP: ' + (r.headers.get('content-security-policy') || 'немає')); }
   catch { L.push('Заголовок CSP: не вдалося перевірити (файл відкрито не через http/https?)'); }
-  out.textContent = L.join('\n') + '\nВікно через data:-URL: перевіряю…';
-  const d = await probe('data'); out.textContent = L.join('\n') + '\nВікно через data:-URL: eval ' + d + '\nВікно через srcdoc: перевіряю…';
-  const s = await probe('srcdoc'); out.textContent = L.join('\n') + '\nВікно через data:-URL: eval ' + d + '\nВікно через srcdoc: eval ' + s;
+  hdr = L.join('\n'); show();
+  P.push(fmtProbe('Тест у вікні (data:-URL)', await probe('data'))); show();
+  P.push(fmtProbe('Тест у вікні (srcdoc)', await probe('srcdoc'))); show();
+  const W = [...desk.querySelectorAll('.xwin')];
+  P.push('Відкриті вікна: ' + (W.length || 'немає') + W.map(w => {
+    const f = SCAN.filter(([re]) => re.test(w._code)).map(([, m]) => '    • ' + m);
+    return '\n— ' + w._name + ' (' + (w._data === undefined ? 'ще не запускалось' : w._data ? 'data:' : 'srcdoc') + ', ' + Math.ceil(w._code.length / 1024) + ' КБ)' + (f.length ? ':\n' + f.join('\n') : ': у коді нічого, що блокується, не знайдено');
+  }).join(''));
+  P.push('Помилки з вікон (останні): ' + (xlog.length ? '\n' + xlog.slice(-8).map(x => '  • ' + x).join('\n') : 'поки немає'));
+  P.push('Як читати: ✗ на localStorage / IndexedDB / cookie / буфер обміну — це обмеження пісочниці (так задумано для безпеки). ✗ на мережі — вікна без інтернету; EXEC_NET=true дозволяє https. Пункти зі списку «Відкриті вікна» — саме те, що в коді вікна може зламати скрипт.');
+  show();
 };
 $('cDiag').onclick = () => $('dDiag').close();
 
