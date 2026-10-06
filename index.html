@@ -70,7 +70,7 @@ textarea{min-height:110px;resize:vertical}
 <body>
 <header>
   <h1>Стіна повідомлень</h1>
-  <button id="bSearch" class="ghost">Пошук</button>
+  <button id="bDiag" class="ghost" title="Діагностика CSP" aria-label="Діагностика CSP">ℹ</button><button id="bSearch" class="ghost">Пошук</button>
   <button id="bNew" aria-label="Нове повідомлення">+ Нове</button>
 </header>
 <main><div id="wall"></div><div id="empty" hidden>Поки що немає відкритих повідомлень.</div></main>
@@ -114,6 +114,7 @@ textarea{min-height:110px;resize:vertical}
   <div class="row" style="justify-content:center"><a id="qrDl" download="qr.png" class="fn">Зберегти PNG</a><button class="ghost" id="qrClose" type="button">Закрити</button></div>
 </dialog>
 
+<dialog id="dDiag"><h2>Діагностика CSP</h2><pre id="diagOut" style="white-space:pre-wrap;word-break:break-word;font-size:13px;margin:10px 0"></pre><div class="row" style="justify-content:flex-end"><button id="cDiag">Закрити</button></div></dialog>
 <div id="desk"></div><div id="tray" hidden></div>
 <script>
 // ===== НАЛАШТУВАННЯ =====
@@ -494,6 +495,28 @@ $('go').onclick = async () => {
   } catch (e) { err.textContent = e.message; }
 };
 $('qCode').onkeydown = $('qPw').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
+
+// ---- діагностика CSP ----
+const probe = mode => new Promise(res => {
+  const f = document.createElement('iframe'); f.sandbox = 'allow-scripts'; f.hidden = true;
+  const h = withCsp('<script>var r="дозволено";try{new Function("return 1")()}catch(e){r="ЗАБЛОКОВАНО"}parent.postMessage({diag:"' + mode + '",r:r},"*")<\/script>');
+  const done = r => { removeEventListener('message', on); f.remove(); res(r); };
+  const on = e => { if (e.source === f.contentWindow && e.data?.diag) done(e.data.r); };
+  addEventListener('message', on); setTimeout(() => done('не відповіло (фрейм заблоковано?)'), 2500);
+  document.body.appendChild(f);
+  if (mode === 'data') f.src = 'data:text/html;base64,' + toB64(new TextEncoder().encode(h)); else f.srcdoc = h;
+});
+$('bDiag').onclick = async () => {
+  const out = $('diagOut'), L = []; out.textContent = 'Перевіряю…'; $('dDiag').showModal();
+  try { new Function('return 1')(); L.push('Сторінка: eval дозволено'); } catch { L.push('Сторінка: eval ЗАБЛОКОВАНО'); }
+  L.push('<meta> CSP у сторінці: ' + (document.querySelector('meta[http-equiv="Content-Security-Policy" i]') ? 'є' : 'немає'));
+  try { const r = await fetch(location.href, { method: 'HEAD', cache: 'no-store' }); L.push('Заголовок CSP: ' + (r.headers.get('content-security-policy') || 'немає')); }
+  catch { L.push('Заголовок CSP: не вдалося перевірити (файл відкрито не через http/https?)'); }
+  out.textContent = L.join('\n') + '\nВікно через data:-URL: перевіряю…';
+  const d = await probe('data'); out.textContent = L.join('\n') + '\nВікно через data:-URL: eval ' + d + '\nВікно через srcdoc: перевіряю…';
+  const s = await probe('srcdoc'); out.textContent = L.join('\n') + '\nВікно через data:-URL: eval ' + d + '\nВікно через srcdoc: eval ' + s;
+};
+$('cDiag').onclick = () => $('dDiag').close();
 
 // ---- старт ----
 refreshWall(); setInterval(() => { if (!document.hidden) refreshWall(); }, POLL_MS);
