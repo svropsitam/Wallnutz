@@ -31,14 +31,32 @@ dialog h2{margin:0;font-size:18px}
 .numtag{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--line);border-radius:6px;padding:1px 2px 1px 8px;font-size:13px;background:var(--bg);white-space:nowrap}
 .cp-ico{background:transparent;color:var(--mute);border:0;padding:2px 6px;font-size:15px;line-height:1;border-radius:4px}
 .cp-ico:hover{color:var(--acc)}
-.xwin{position:relative;width:100%;max-width:100%;min-width:180px;height:260px;margin-top:8px;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
-.xbar{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:2px 4px 2px 8px;background:var(--bg);color:var(--mute);font-size:12px;flex:none}
-.xt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+main{padding-bottom:56px}
+#desk{position:fixed;inset:0;z-index:20;pointer-events:none;--tray:48px}
+.xwin{position:absolute;pointer-events:auto;min-width:200px;min-height:140px;display:flex;flex-direction:column;background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 6px 24px #0006}
+.xbar{display:flex;justify-content:space-between;align-items:center;gap:6px;padding-left:10px;height:34px;flex:none;background:var(--line);color:var(--ink);font-size:13px;cursor:move;touch-action:none;user-select:none}
+.xwin.act .xbar{background:var(--acc);color:var(--paper)}
+.xbar .xt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xbtn{display:flex;flex:none}
+.xbtn button{background:transparent;color:inherit;border:0;border-radius:0;padding:0;width:34px;height:34px;font-size:15px}
+.xbtn button:hover{background:#fff4}.xbtn .xx:hover{background:#c0392b;color:#fff}
 .xwin iframe{flex:1;min-height:0;width:100%;border:0;background:#fff}
-.xwin.drag iframe{pointer-events:none}
-.xgrip{position:absolute;right:0;bottom:0;width:28px;height:28px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 48%,#888 48%,#888 56%,transparent 56%,transparent 68%,#888 68%,#888 76%,transparent 76%)}
-.xwin.max{position:fixed;inset:8px;z-index:30;width:auto!important;height:auto!important;max-width:none;margin:0;box-shadow:0 0 0 100vmax #000a}
-.xwin.max .xgrip{display:none}
+.xwin:not(.act) iframe,.xwin.drag iframe{pointer-events:none}
+.xwin.min{display:none}
+.xwin.max{left:0!important;top:0!important;width:100%!important;height:calc(100% - var(--tray))!important;border-radius:0}
+.xwin.max .rz{display:none}.xwin.max .xbar{cursor:default}
+.rz{position:absolute;z-index:3;touch-action:none}
+.rz-n{top:0;left:14px;right:14px;height:7px;cursor:ns-resize}.rz-s{bottom:0;left:14px;right:14px;height:7px;cursor:ns-resize}
+.rz-e{right:0;top:14px;bottom:14px;width:7px;cursor:ew-resize}.rz-w{left:0;top:14px;bottom:14px;width:7px;cursor:ew-resize}
+.rz-ne,.rz-nw,.rz-se,.rz-sw{width:18px;height:18px}
+.rz-ne{top:0;right:0;cursor:nesw-resize}.rz-sw{bottom:0;left:0;cursor:nesw-resize}.rz-nw{top:0;left:0;cursor:nwse-resize}.rz-se{bottom:0;right:0;cursor:nwse-resize}
+@media(pointer:coarse){.rz-n,.rz-s{height:14px}.rz-e,.rz-w{width:14px}.rz-ne,.rz-nw,.rz-se,.rz-sw{width:30px;height:30px}}
+#tray{position:fixed;left:0;right:0;bottom:0;z-index:25;display:flex;gap:6px;padding:5px 8px calc(5px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line);overflow-x:auto}
+#tray[hidden]{display:none}
+.tb{flex:none;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--paper);color:var(--ink);border:1px solid var(--line);padding:4px 10px;font-size:13px}
+.tb.on{border-color:var(--acc);box-shadow:inset 0 -2px var(--acc)}
+.xchip{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;padding:6px 8px;border:1px dashed var(--line);border-radius:6px;font-size:14px}
+.xchip .xt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.xchip button{padding:3px 10px;font-size:13px;flex:none}
 textarea,input[type=text],input[type=password]{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
 textarea{min-height:110px;resize:vertical}
 .row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
@@ -95,12 +113,14 @@ textarea{min-height:110px;resize:vertical}
   <div class="row" style="justify-content:center"><a id="qrDl" download="qr.png" class="fn">Зберегти PNG</a><button class="ghost" id="qrClose" type="button">Закрити</button></div>
 </dialog>
 
+<div id="desk"></div><div id="tray" hidden></div>
 <script>
 // ===== НАЛАШТУВАННЯ =====
 const DB_URL = "https://wall-nutz-default-rtdb.europe-west1.firebasedatabase.app";                 // напр. https://my-project-default-rtdb.europe-west1.firebasedatabase.app
 const RETENTION_DAYS = 1;          // скільки днів зберігати повідомлення (має збігатися з правилами БД)
 const WALL_LIMIT = 30;             // скільки останніх відкритих повідомлень показувати
 const POLL_MS = 5000;              // період оновлення стіни
+const MAX_AUTO_OPEN = 2;           // скільки вікон відкривається одразу; решта стартують згорнутими в панелі внизу
 const AUTORUN_EXEC = true;         // true: HTML-вікна запускаються одразу; false: лише після натискання ↻
 const CHUNK = 900_000;             // розмір одного шматка файлу (символів base64, ≈ 0,66 МБ); ліміту на розмір файлу немає
 // =========================
@@ -198,25 +218,83 @@ function withCsp(h) {
   if (/^\s*<!doctype[^>]*>/i.test(h)) return h.replace(/^(\s*<!doctype[^>]*>)/i, '$1' + CSP);
   return '<!doctype html>' + CSP + h;
 }
-function execWindow(code, name) {
+// ---- робочий стіл: вільні вікна (перетягування, розтягування, перекриття, згортання) ----
+const desk = $('desk'), tray = $('tray');
+let zTop = 10, winN = 0;
+const visWins = () => [...desk.querySelectorAll('.xwin:not(.min)')];
+function focusWin(w) {
+  desk.querySelectorAll('.xwin.act').forEach(x => x.classList.remove('act'));
+  w.classList.add('act'); w.style.zIndex = ++zTop;
+  tray.querySelectorAll('.tb').forEach(b => b.classList.toggle('on', b._w === w));
+}
+function clampWin(w) {
+  if (w.classList.contains('max')) return;
+  const wd = parseFloat(w.style.width) || 300;
+  w.style.left = Math.min(Math.max(parseFloat(w.style.left) || 0, 80 - wd), innerWidth - 80) + 'px';
+  w.style.top = Math.min(Math.max(parseFloat(w.style.top) || 0, 0), innerHeight - 80) + 'px';
+}
+addEventListener('resize', () => desk.querySelectorAll('.xwin').forEach(clampWin));
+function createWin(code, name, o = {}) {
   const w = document.createElement('div'); w.className = 'xwin';
-  w.innerHTML = '<div class="xbar"><span class="xt"></span><span><button class="cp-ico xc" type="button" title="Копіювати код">⧉</button><button class="cp-ico xr" type="button" title="Перезапустити">↻</button><button class="cp-ico xm" type="button" title="На весь екран / згорнути">⤢</button></span></div><iframe sandbox="allow-scripts" title="HTML-повідомлення"></iframe><div class="xgrip" title="Потягніть, щоб змінити розмір"></div>';
-  w.querySelector('.xt').textContent = '▶ ' + name;
-  const fr = w.querySelector('iframe'), run = () => { fr.srcdoc = withCsp(code); };
-  w.querySelector('.xr').onclick = run;
-  w.querySelector('.xc').onclick = e => copyText(code, e.currentTarget);
-  w.querySelector('.xm').onclick = () => w.classList.toggle('max');
-  const g = w.querySelector('.xgrip');
-  g.onpointerdown = e => {
-    e.preventDefault(); g.setPointerCapture(e.pointerId);
-    const r = w.getBoundingClientRect(), sx = e.clientX, sy = e.clientY; w.classList.add('drag');
-    g.onpointermove = v => { w.style.width = Math.max(180, r.width + v.clientX - sx) + 'px'; w.style.height = Math.max(140, r.height + v.clientY - sy) + 'px'; };
-    g.onpointerup = g.onpointercancel = () => { w.classList.remove('drag'); g.onpointermove = null; };
+  w.innerHTML = '<div class="xbar"><span class="xt"></span><span class="xbtn"><button type="button" class="xc" title="Копіювати код">⧉</button><button type="button" class="xr" title="Перезапустити">↻</button><button type="button" class="xn" title="Згорнути">—</button><button type="button" class="xm" title="Розгорнути / відновити">▢</button><button type="button" class="xx" title="Закрити">✕</button></span></div><iframe sandbox="allow-scripts" title="HTML-вікно"></iframe>'
+    + ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(d => '<i class="rz rz-' + d + '" data-d="' + d + '"></i>').join('');
+  const q = s => w.querySelector(s);
+  q('.xt').textContent = name;
+  const W = Math.min(440, innerWidth - 24), H = Math.min(340, Math.round(innerHeight * .55)), k = winN++ % 8;
+  w.style.cssText = 'width:' + W + 'px;height:' + H + 'px;left:' + Math.max(8, Math.min(innerWidth - W - 8, 16 + k * 28)) + 'px;top:' + Math.min(64 + k * 28, innerHeight - H - 56 > 8 ? innerHeight - H - 56 : 8) + 'px';
+  const fr = q('iframe'), run = () => { fr.srcdoc = withCsp(code); };
+  const tb = document.createElement('button'); tb.type = 'button'; tb.className = 'tb'; tb.textContent = name; tb._w = w; tray.appendChild(tb); tray.hidden = false;
+  const restore = () => { w.classList.remove('min'); focusWin(w); };
+  const minimize = () => { w.classList.add('min'); w.classList.remove('act'); tb.classList.remove('on'); };
+  tb.onclick = () => (w.classList.contains('min') || !w.classList.contains('act')) ? restore() : minimize();
+  q('.xr').onclick = run;
+  q('.xc').onclick = e => copyText(code, e.currentTarget);
+  q('.xn').onclick = minimize;
+  q('.xm').onclick = () => { w.classList.toggle('max'); focusWin(w); };
+  q('.xx').onclick = () => { w.remove(); tb.remove(); tray.hidden = !tray.children.length; o.onClose?.(); };
+  w.addEventListener('pointerdown', () => focusWin(w), true);
+  const bar = q('.xbar');
+  bar.ondblclick = e => { if (!e.target.closest('button')) q('.xm').click(); };
+  bar.onpointerdown = e => {
+    if (e.target.closest('button') || w.classList.contains('max')) return;
+    e.preventDefault(); bar.setPointerCapture(e.pointerId);
+    const sx = e.clientX, sy = e.clientY, l = w.offsetLeft, t = w.offsetTop; w.classList.add('drag');
+    bar.onpointermove = v => { w.style.left = (l + v.clientX - sx) + 'px'; w.style.top = (t + v.clientY - sy) + 'px'; };
+    bar.onpointerup = bar.onpointercancel = () => { w.classList.remove('drag'); bar.onpointermove = null; clampWin(w); };
   };
-  if (AUTORUN_EXEC) run(); else fr.srcdoc = '<body style="font:14px sans-serif;padding:12px">Натисніть ↻, щоб запустити</body>';
+  w.querySelectorAll('.rz').forEach(h => h.onpointerdown = e => {
+    e.preventDefault(); h.setPointerCapture(e.pointerId);
+    const d = h.dataset.d, sx = e.clientX, sy = e.clientY, l = w.offsetLeft, t = w.offsetTop, wd = w.offsetWidth, ht = w.offsetHeight; w.classList.add('drag');
+    h.onpointermove = v => {
+      const dx = v.clientX - sx, dy = v.clientY - sy; let nl = l, nt = t, nw = wd, nh = ht;
+      if (d.includes('e')) nw = Math.max(200, wd + dx);
+      if (d.includes('s')) nh = Math.max(140, ht + dy);
+      if (d.includes('w')) { nw = Math.max(200, wd - dx); nl = l + wd - nw; }
+      if (d.includes('n')) { nh = Math.max(140, ht - dy); nt = Math.max(0, t + ht - nh); }
+      Object.assign(w.style, { left: nl + 'px', top: nt + 'px', width: nw + 'px', height: nh + 'px' });
+    };
+    h.onpointerup = h.onpointercancel = () => { w.classList.remove('drag'); h.onpointermove = null; };
+  });
+  desk.appendChild(w); run();
+  if (o.auto && visWins().length > MAX_AUTO_OPEN) minimize(); else focusWin(w);
   return w;
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.xwin.max').forEach(w => w.classList.remove('max')); });
+function execLauncher(code, name) {
+  const el = document.createElement('div'); el.className = 'xchip';
+  el.innerHTML = '<span class="xt"></span><button type="button" class="ghost">Відкрити вікно</button>';
+  el.firstChild.textContent = '▣ ' + name;
+  let win = null; const btn = el.querySelector('button');
+  const open = auto => {
+    if (win?.isConnected) { win.classList.remove('min'); focusWin(win); return; }
+    el.closest('dialog')?.close();                      // модальне вікно пошуку перекривало б робочий стіл
+    win = createWin(code, name, { auto, onClose: () => { btn.textContent = 'Відкрити вікно'; } });
+    btn.textContent = 'Показати вікно';
+  };
+  btn.onclick = () => open(false);
+  el.start = () => { if (AUTORUN_EXEC) open(true); };
+  return el;
+}
+
 
 async function showFile(box, f, getData, x) {
   const el = document.createElement('div'); el.className = 'att'; box.appendChild(el);
@@ -229,7 +307,7 @@ async function showFile(box, f, getData, x) {
     if (t.startsWith('image/')) { const i = new Image(); i.src = url; i.alt = f.name; el.appendChild(i); }
     else if (t.startsWith('video/')) { const v = document.createElement('video'); v.src = url; v.controls = true; el.appendChild(v); }
     else if (t.startsWith('audio/')) { const a = document.createElement('audio'); a.src = url; a.controls = true; el.appendChild(a); }
-    else if (x && t === 'text/html') el.appendChild(execWindow(new TextDecoder().decode(u8), f.name));
+    else if (x && t === 'text/html') { const L = execLauncher(new TextDecoder().decode(u8), f.name); el.appendChild(L); L.start(); }
     else if (t.startsWith('text/') && u8.length < 20000) { const p = document.createElement('pre'); p.textContent = new TextDecoder().decode(u8); el.appendChild(p); }
     const a = document.createElement('a'); a.href = url; a.download = f.name; a.textContent = '⬇ ' + f.name + ' (' + Math.ceil(f.size / 1024) + ' КБ, ' + t + ')'; el.appendChild(a);
   } catch (e) { el.textContent = 'Не вдалося завантажити ' + f.name; }
