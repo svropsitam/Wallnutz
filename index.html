@@ -21,6 +21,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .code{font-family:ui-monospace,Consolas,monospace;cursor:pointer}
 .text{white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
 .text.open{display:block}
+.text a{color:var(--acc);text-decoration:underline;word-break:break-all}
+.more{padding:2px 10px;font-size:12px;margin-top:4px}
 .att{margin-top:8px}.att img,.att video{max-width:100%;border-radius:3px;display:block}.att audio{width:100%}
 .att pre{max-height:160px;overflow:auto;background:var(--bg);padding:6px;margin:4px 0;font-size:12px}
 .att a{color:var(--acc);font-size:14px}.fn{font-size:12px;color:var(--mute)}
@@ -38,7 +40,7 @@ main{padding-bottom:56px}
 .xwin.act .xbar{background:var(--acc);color:var(--paper)}
 .xbar .xt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .xbtn{display:flex;flex:none}
-.xbtn button{background:transparent;color:inherit;border:0;border-radius:0;padding:0;width:34px;height:34px;font-size:15px}
+.xbtn button{background:transparent;color:inherit;border:0;border-radius:0;padding:0;width:30px;height:34px;font-size:15px}.xbtn .xw.on{background:#2e7d32;color:#fff}
 .xbtn button:hover{background:#fff4}.xbtn .xx:hover{background:#c0392b;color:#fff}
 .xwin iframe{flex:1;min-height:0;width:100%;border:0;background:#fff}
 .xwin:not(.act) iframe,.xwin.drag iframe{pointer-events:none}
@@ -80,7 +82,7 @@ textarea{min-height:110px;resize:vertical}
     <h2>Нове повідомлення</h2>
     <span class="numtag" title="Номер повідомлення"><span class="code" id="newCode"></span><button class="cp-ico" id="copyNew" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button><button class="cp-ico" id="qrNew" type="button" aria-label="QR-код номера" title="QR-код номера">▦</button></span>
   </div>
-  <textarea id="txt" maxlength="2000" placeholder="Текст повідомлення"></textarea>
+  <textarea id="txt" placeholder="Текст повідомлення"></textarea>
   <div class="row"><button class="ghost" id="bAtt" title="Прикріпити файл">📎 Файл</button><input type="file" id="file" multiple hidden>
     <div class="chips" id="chips"></div></div>
   <div class="row"><label><input type="checkbox" id="pub" checked> Відкрите (видно на стіні)</label></div>
@@ -114,7 +116,7 @@ textarea{min-height:110px;resize:vertical}
   <div class="row" style="justify-content:center"><a id="qrDl" download="qr.png" class="fn">Зберегти PNG</a><button class="ghost" id="qrClose" type="button">Закрити</button></div>
 </dialog>
 
-<dialog id="dDiag"><h2>Діагностика CSP</h2><pre id="diagOut" style="white-space:pre-wrap;word-break:break-word;font-size:13px;margin:10px 0"></pre><div class="row" style="justify-content:flex-end"><button id="cDiag">Закрити</button></div></dialog>
+<dialog id="dDiag"><h2>Діагностика CSP</h2><pre id="diagOut" style="white-space:pre-wrap;word-break:break-word;font-size:13px;margin:10px 0"></pre><div class="row" style="justify-content:flex-end"><button class="ghost" id="bCopyDiag">Копіювати звіт</button><button class="ghost" id="bTest">Тестове вікно</button><button id="cDiag">Закрити</button></div></dialog>
 <div id="desk"></div><div id="tray" hidden></div>
 <script>
 // ===== НАЛАШТУВАННЯ =====
@@ -124,6 +126,7 @@ const WALL_LIMIT = 30;             // скільки останніх відкр
 const POLL_MS = 5000;              // період оновлення стіни
 const MAX_AUTO_OPEN = 0;           // скільки HTML-вікон відкривається одразу при завантаженні (0 = усі згорнуті в панелі внизу й не запускаються, доки їх не розгорнути)
 const AUTORUN_EXEC = true;         // true: HTML-вікна запускаються одразу; false: лише після натискання ↻
+const INLINE_TEXT = 1500;          // текст довший за це ріжеться на шматки (як файли); на стіні показується початок + «Показати повністю»
 const CHUNK = 900_000;             // розмір одного шматка файлу (символів base64, ≈ 0,66 МБ); ліміту на розмір файлу немає
 // =========================
 
@@ -176,7 +179,21 @@ async function decryptPayload(node, pw) {
   return JSON.parse(new TextDecoder().decode(await ungz(new Uint8Array(pt))));
 }
 
-// ---- шматки: blob/<ключ>/<файл>/<індекс шматка> ----
+async function packText(t) { const raw = new TextEncoder().encode(t), z = await gz(raw), useZ = z.length < raw.length; return { c: useZ ? 1 : 0, d: toB64(useZ ? z : raw) }; }
+// ---- посилання: підкреслені й клікабельні (лише http/https), без innerHTML ----
+function linkify(el, text) {
+  el.textContent = ''; const re = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi; let last = 0, m;
+  while ((m = re.exec(text))) {
+    let u = m[0];
+    while (u && (/[.,;:!?'"”’»\]}]$/.test(u) || (u.endsWith(')') && (u.match(/\(/g) || []).length < (u.match(/\)/g) || []).length))) u = u.slice(0, -1);
+    if (!/^(?:https?:\/\/|www\.)./i.test(u)) continue;
+    el.append(text.slice(last, m.index));
+    const a = document.createElement('a'); a.href = /^www\./i.test(u) ? 'https://' + u : u; a.textContent = u; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow'; a.onclick = e => e.stopPropagation(); el.append(a);
+    last = m.index + u.length; re.lastIndex = last;
+  }
+  el.append(text.slice(last));
+}
+// ---- шматки: blob/<ключ>/<файл або t для тексту>/<індекс шматка> ----
 const nChunks = s => Math.ceil(s.length / CHUNK);
 async function retry(fn, n = 3) { for (let a = 1; ; a++) { try { return await fn(); } catch (e) { if (a >= n) throw e; await new Promise(r => setTimeout(r, 800 * a)); } } }
 async function uploadChunks(k, items, say) {
@@ -220,12 +237,12 @@ const EXEC_SANDBOX = 'allow-scripts allow-modals allow-forms allow-downloads';  
 const EXEC_NET = false;            // true: дозволити https-скрипти/CDN/fetch усередині вікон (зручніше, але менш безпечно)
 const SHIMJS = '(function(){function M(){var d={};return{getItem:function(k){return k in d?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}["localStorage","sessionStorage"].forEach(function(n){try{window[n]}catch(e){try{var m=M();Object.defineProperty(window,n,{configurable:true,get:function(){return m}})}catch(e2){}}});try{document.cookie}catch(e){try{var c="";Object.defineProperty(document,"cookie",{configurable:true,get:function(){return c},set:function(v){c=String(v).split(";")[0]}})}catch(e3){}}})();';
 const ERRJS = 'addEventListener("error",function(e){parent.postMessage({xerr:e.message+" ("+(e.lineno||0)+")"},"*")});addEventListener("securitypolicyviolation",function(e){parent.postMessage({xerr:"CSP заблокував: "+e.blockedURI+" ("+e.violatedDirective+")"},"*")});addEventListener("unhandledrejection",function(e){parent.postMessage({xerr:"Promise: "+e.reason},"*")});';
-const CSP = '<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + (EXEC_NET
+const cspFor = net => '<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + (net
   ? "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; media-src data: blob: https:; font-src data: https:; connect-src https:; worker-src blob:"
   : "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:") + '"><script>' + SHIMJS + ERRJS + '<\/script>';
 const SHIM = '(function(){function mk(init,save){var d={};for(var k in init)d[k]=init[k];var api={getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[k]=String(v);save(d)},removeItem:function(k){delete d[k];save(d)},clear:function(){d={};save(d)},key:function(i){var a=Object.keys(d);return a[i]===undefined?null:a[i]}};return new Proxy(api,{get:function(t,k){if(k==="length")return Object.keys(d).length;if(k in t)return t[k];return Object.prototype.hasOwnProperty.call(d,k)?d[k]:undefined},set:function(t,k,v){d[k]=String(v);save(d);return true},deleteProperty:function(t,k){delete d[k];save(d);return true},has:function(t,k){return k in t||k in d},ownKeys:function(){return Object.keys(d)},getOwnPropertyDescriptor:function(t,k){return k in d?{value:d[k],enumerable:true,configurable:true,writable:true}:undefined}})}var L=mk(window.__LS||{},function(d){parent.postMessage({xls:JSON.stringify(d)},"*")}),S=mk({},function(){});try{window.localStorage.getItem("x")}catch(e){try{Object.defineProperty(window,"localStorage",{configurable:true,get:function(){return L}});Object.defineProperty(window,"sessionStorage",{configurable:true,get:function(){return S}})}catch(e2){}}})();';
-function withCsp(h, ls) {
-  const pre = CSP + '<script>window.__LS=' + JSON.stringify(ls || {}).replace(/</g, '\\u003c') + ';' + SHIM + '<\/script>';
+function withCsp(h, ls, net = EXEC_NET) {
+  const pre = cspFor(net) + '<script>window.__LS=' + JSON.stringify(ls || {}).replace(/</g, '\\u003c') + ';' + SHIM + '<\/script>';
   const m = h.match(/<head(?:\s[^>]*)?>/i);
   if (m) return h.replace(m[0], () => m[0] + pre);
   const d = h.match(/^\s*<!doctype[^>]*>/i);
@@ -254,7 +271,7 @@ addEventListener('message', e => {
   if (!e.data?.xerr) return; desk.querySelectorAll('.xwin').forEach(w => { if (w.querySelector('iframe').contentWindow === e.source) { const x = w.querySelector('.xerr'); x.hidden = false; x.textContent = '⚠ ' + String(e.data.xerr).slice(0, 300); xlog.push(w._name + ': ' + String(e.data.xerr).slice(0, 200)); if (xlog.length > 20) xlog.shift(); } }); });
 function createWin(code, name, o = {}) {
   const w = document.createElement('div'); w.className = 'xwin';
-  w.innerHTML = '<div class="xbar"><span class="xt"></span><span class="xbtn"><button type="button" class="xc" title="Копіювати код">⧉</button><button type="button" class="xr" title="Перезапустити">↻</button><button type="button" class="xo" title="Відкрити без обмежень у новій вкладці">↗</button><button type="button" class="xn" title="Згорнути">—</button><button type="button" class="xm" title="Розгорнути / відновити">▢</button><button type="button" class="xx" title="Закрити">✕</button></span></div><iframe title="HTML-вікно"></iframe><div class="xerr" hidden></div>'
+  w.innerHTML = '<div class="xbar"><span class="xt"></span><span class="xbtn"><button type="button" class="xc" title="Копіювати код">⧉</button><button type="button" class="xr" title="Перезапустити">↻</button><button type="button" class="xw" title="Дозволити інтернет цьому вікну (CDN, fetch, модулі з https)">🌐</button><button type="button" class="xo" title="Відкрити без обмежень у новій вкладці">↗</button><button type="button" class="xn" title="Згорнути">—</button><button type="button" class="xm" title="Розгорнути / відновити">▢</button><button type="button" class="xx" title="Закрити">✕</button></span></div><iframe title="HTML-вікно"></iframe><div class="xerr" hidden></div>'
     + ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(d => '<i class="rz rz-' + d + '" data-d="' + d + '"></i>').join('');
   const q = s => w.querySelector(s);
   q('.xt').textContent = name;
@@ -264,17 +281,22 @@ function createWin(code, name, o = {}) {
   const run = () => {
     q('.xerr').hidden = true;
     let ls = {}; try { ls = JSON.parse(localStorage.getItem('xs:' + w._key) || '{}'); } catch {}
-    const html = withCsp(code, ls);
+    const html = withCsp(code, ls, w._net);
     if (EXEC_DATA && !dataBlocked && html.length < 1_400_000) { fr.removeAttribute('srcdoc'); fr.src = 'data:text/html;charset=utf-8;base64,' + toB64(new TextEncoder().encode(html)); w._data = true; }
     else { fr.removeAttribute('src'); fr.srcdoc = html; w._data = false; }
   };
-  w._run = run; w._code = code; w._name = name; w._key = [...code].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36) + code.length;
+  w._run = run; w._code = code; w._name = name; w._net = EXEC_NET; w._key = [...code].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36) + code.length;
   const tb = document.createElement('button'); tb.type = 'button'; tb.className = 'tb'; tb.textContent = name; tb._w = w; tray.appendChild(tb); tray.hidden = false;
   const restore = () => { w.classList.remove('min'); if (w._lazy) { w._lazy = false; run(); } focusWin(w); };
   const minimize = () => { w.classList.add('min'); w.classList.remove('act'); tb.classList.remove('on'); };
   tb.onclick = () => (w.classList.contains('min') || !w.classList.contains('act')) ? restore() : minimize();
   q('.xr').onclick = run;
   q('.xc').onclick = e => copyText(code, e.currentTarget);
+  const xw = q('.xw'); xw.classList.toggle('on', w._net);
+  xw.onclick = () => {
+    if (!w._net && !confirm('Дозволити цьому вікну інтернет (CDN, fetch, модулі з https)?\nКод зможе завантажувати зовнішні скрипти й надсилати дані на зовнішні сервери.')) return;
+    w._net = !w._net; xw.classList.toggle('on', w._net); run();
+  };
   q('.xo').onclick = () => {
     if (!confirm('Відкрити в новій вкладці БЕЗ ізоляції?\nКод отримає повний доступ (мережа, CDN, сховище) і працюватиме від імені цього сайту. Робіть це лише з кодом, якому довіряєте.')) return;
     const u = URL.createObjectURL(new Blob([code], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(u), 60000);
@@ -358,11 +380,20 @@ async function deleteMsg(m, kind, card) {
 function renderMsg(m, getData, kind) {
   const d = document.createElement('article'); d.className = 'msg';
   d.innerHTML = '<div class="meta"><span><span class="code"></span><button class="cp-ico cp" type="button" aria-label="Копіювати номер" title="Копіювати номер">⧉</button></span><span>' + fmt(m.t) + ' <button class="cp-ico ct" type="button" aria-label="Копіювати текст" title="Копіювати текст">❐</button><button class="cp-ico del" type="button" aria-label="Видалити" title="Видалити (потрібен код видалення)">✕</button></span></div><div class="text"></div>';
-  const ct = d.querySelector('.ct'); if (m.text) ct.onclick = () => copyText(m.text, ct); else ct.remove();
+  const ct = d.querySelector('.ct'); if (m.text) ct.onclick = async () => copyText(await getFull(), ct); else ct.remove();
   const del = d.querySelector('.del'); if (m.n && kind) del.onclick = () => deleteMsg(m, kind, d); else del.remove();
   d.querySelector('.code').textContent = '№ ' + (m.n || '—');
   const cp = d.querySelector('.cp'); if (m.n) cp.onclick = () => copyText(m.n, cp); else cp.remove();
-  const tx = d.querySelector('.text'); tx.textContent = m.text || ''; tx.onclick = () => tx.classList.toggle('open');
+  const tx = d.querySelector('.text'); linkify(tx, m.text || '');
+  let full = null;
+  const getFull = async note => {
+    if (!m.tx) return m.text || ''; if (full != null) return full;
+    const raw = fromB64(await getData('t', m.tx, (a, b) => { if (note) note.textContent = '⏳ ' + a + '/' + b; }));
+    full = new TextDecoder().decode(m.tx.c ? await ungz(raw) : raw); return full;
+  };
+  const more = m.tx ? Object.assign(document.createElement('button'), { type: 'button', className: 'ghost more', textContent: 'Показати повністю (' + m.tx.size + ' симв.)' }) : null;
+  if (more) { tx.after(more); more.onclick = async () => { more.textContent = '⏳…'; try { linkify(tx, await getFull(more)); tx.classList.add('open'); more.remove(); } catch { more.textContent = 'Не вдалося завантажити — повторити'; } }; }
+  tx.onclick = () => (more && full == null) ? more.click() : tx.classList.toggle('open');
   if (!m.text) tx.remove();
   (m.files || []).forEach((f, i) => showFile(d, f, prog => getData(i, f, prog), m.x));
   return d;
@@ -450,7 +481,8 @@ $('bAtt').onclick = () => $('file').click();
 $('file').onchange = e => { files.push(...e.target.files); e.target.value = ''; drawChips(); };
 function drawChips() { $('chips').innerHTML = files.map((f, i) => '<span>' + esc(f.name) + ' <a href="#" data-i="' + i + '" style="text-decoration:none">✕</a></span>').join(''); }
 $('chips').onclick = e => { const i = e.target.dataset?.i; if (i !== undefined) { e.preventDefault(); files.splice(+i, 1); drawChips(); } };
-const syncX = () => { const on = $('xex').checked; if (on) $('txt').removeAttribute('maxlength'); else $('txt').maxLength = 2000; $('txt').placeholder = on ? 'Вставте HTML+JS код (або прикріпіть .html файл)' : 'Текст повідомлення'; };
+const syncX = () => { $('txt').placeholder = $('xex').checked ? 'Вставте HTML+JS код (або прикріпіть .html файл)' : 'Текст повідомлення'; };
+$('txt').addEventListener('input', () => { if (!$('xex').checked && /^\s*<(!doctype|html)\b/i.test($('txt').value)) { $('xex').checked = true; syncX(); } });
 $('xex').onchange = syncX;
 $('aes').onchange = () => { const on = $('aes').checked; $('pw').hidden = !on; $('pub').disabled = on; if (on) $('pub').checked = false; };
 
@@ -474,6 +506,10 @@ $('send').onclick = async () => {
     } else {
       items = packed.map((p, i) => ({ i, d: p.d }));
       node = { t: SV, n: code, text, ...(isX ? { x: 1 } : {}), files: packed.map(({ d, ...meta }) => ({ ...meta, cn: nChunks(d) })) };
+      if (text.length > INLINE_TEXT) {   // довгий текст: початок у вузлі, решта шматками в blob/<ключ>/t/<n>
+        err.textContent = 'Стискаю текст…'; const tp = await packText(text);
+        node.text = text.slice(0, 300).trimEnd() + '…'; node.tx = { c: tp.c, size: text.length, cn: nChunks(tp.d) }; items.push({ i: 't', d: tp.d });
+      }
     }
     await uploadChunks(k, items, msg => err.textContent = msg);
     await api((isPub ? 'pub/' : 'priv/') + k + '.json', 'PUT', node);                  // повідомлення з'являється лише коли всі шматки на місці
@@ -546,7 +582,7 @@ const SCAN = [
   [/http-equiv\s*=\s*["']?content-security-policy/i, 'власний <meta> CSP у коді — може заборонити eval чи скрипти'],
   [/<script[^>]+src\s*=\s*["']?(https?:)?\/\//i, 'зовнішній <script src> — блокується (немає мережі)'],
   [/<link[^>]+href\s*=\s*["']?(https?:)?\/\//i, 'зовнішній <link> (стилі/шрифти) — блокується'],
-  [/\b(fetch|XMLHttpRequest|WebSocket|EventSource)\b/, 'мережеві запити — блокуються (EXEC_NET=true дозволяє https)'],
+  [/\b(fetch|XMLHttpRequest|WebSocket|EventSource)\b/, 'мережеві запити — блокуються (кнопка 🌐 у заголовку вікна дозволяє https)'],
   [/\b(localStorage|sessionStorage|indexedDB)\b/, 'localStorage/IndexedDB — недоступні в пісочниці; без try/catch скрипт падає'],
   [/\b(alert|confirm|prompt)\s*\(/, 'alert/confirm/prompt — заблоковано пісочницею'],
   [/window\.open|target\s*=\s*["']?_blank/, 'window.open / _blank — заблоковано'],
@@ -570,13 +606,19 @@ $('bDiag').onclick = async () => {
   const W = [...desk.querySelectorAll('.xwin')];
   P.push('Відкриті вікна: ' + (W.length || 'немає') + W.map(w => {
     const f = SCAN.filter(([re]) => re.test(w._code)).map(([, m]) => '    • ' + m);
-    return '\n— ' + w._name + ' (' + (w._data === undefined ? 'ще не запускалось' : w._data ? 'data:' : 'srcdoc') + ', ' + Math.ceil(w._code.length / 1024) + ' КБ)' + (f.length ? ':\n' + f.join('\n') : ': у коді нічого, що блокується, не знайдено');
+    return '\n— ' + w._name + ' (' + (w._data === undefined ? 'ще не запускалось' : w._data ? 'data:' : 'srcdoc') + ', ' + Math.ceil(w._code.length / 1024) + ' КБ)' + (f.length ? ':\n' + f.join('\n') : ': у коді нічого, що блокується, не знайдено') + '\n    стан: ' + w.className + ' | iframe ' + (r => Math.round(r.width) + '×' + Math.round(r.height))(w.querySelector('iframe').getBoundingClientRect()) + ' | помилка: ' + (w.querySelector('.xerr').hidden ? 'немає' : w.querySelector('.xerr').textContent) + '\n    початок коду: ' + JSON.stringify(w._code.slice(0, 140));
   }).join(''));
   P.push('Помилки з вікон (останні): ' + (xlog.length ? '\n' + xlog.slice(-8).map(x => '  • ' + x).join('\n') : 'поки немає'));
-  P.push('Як читати: localStorage / sessionStorage / cookie у вікнах замінені тимчасовими (живуть у пам’яті вікна й зникають при закритті); IndexedDB недоступний (так задумано для безпеки). ✗ на мережі — вікна без інтернету; EXEC_NET=true дозволяє https. Пункти зі списку «Відкриті вікна» — саме те, що в коді вікна може зламати скрипт.');
+  P.push('Як читати: localStorage / sessionStorage / cookie у вікнах замінені тимчасовими (живуть у пам’яті вікна й зникають при закритті); IndexedDB недоступний (так задумано для безпеки). ✗ на мережі — вікна без інтернету; кнопка 🌐 у заголовку вікна дозволяє https. Пункти зі списку «Відкриті вікна» — саме те, що в коді вікна може зламати скрипт.');
   show();
 };
 $('cDiag').onclick = () => $('dDiag').close();
+$('bCopyDiag').onclick = e => copyText($('diagOut').textContent, e.currentTarget);
+$('bTest').onclick = () => {
+  $('dDiag').close();
+  const code = '<!doctype html><html><body style="font:18px sans-serif;padding:10px"><h2 id=h>JS не запущено ✗</h2><button id=b>Натисни</button><p id=s></p><script>document.getElementById("h").textContent="✓ JS працює";var n=0;document.getElementById("b").onclick=function(){this.textContent="Натиснуто "+(++n)};var r="localStorage: ";try{localStorage.setItem("t","1");r+="ok"}catch(e){r+=e.name}document.getElementById("s").textContent=r;<\/script></body></html>';
+  const w = createWin(code, 'тест.html', {}); w.classList.remove('min'); focusWin(w);
+};
 
 // ---- старт ----
 refreshWall(); setInterval(() => { if (!document.hidden) refreshWall(); }, POLL_MS);
