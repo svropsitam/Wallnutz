@@ -236,13 +236,17 @@ document.addEventListener('securitypolicyviolation', e => { if (dataBlocked || !
 const EXEC_SANDBOX = 'allow-scripts allow-modals allow-forms allow-downloads';   // права вікон: alert/confirm, форми, завантаження файлів. НЕ додавайте allow-same-origin: це зніме ізоляцію
 const EXEC_NET = false;            // true: дозволити https-скрипти/CDN/fetch усередині вікон (зручніше, але менш безпечно)
 const SHIMJS = '(function(){function M(){var d={};return{getItem:function(k){return k in d?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}["localStorage","sessionStorage"].forEach(function(n){try{window[n]}catch(e){try{var m=M();Object.defineProperty(window,n,{configurable:true,get:function(){return m}})}catch(e2){}}});try{document.cookie}catch(e){try{var c="";Object.defineProperty(document,"cookie",{configurable:true,get:function(){return c},set:function(v){c=String(v).split(";")[0]}})}catch(e3){}}})();';
-const ERRJS = 'addEventListener("error",function(e){parent.postMessage({xerr:e.message+" ("+(e.lineno||0)+")"},"*")});addEventListener("securitypolicyviolation",function(e){parent.postMessage({xerr:"CSP заблокував: "+e.blockedURI+" ("+e.violatedDirective+")"},"*")});addEventListener("unhandledrejection",function(e){parent.postMessage({xerr:"Promise: "+e.reason},"*")});';
-const cspFor = net => '<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + (net
-  ? "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; media-src data: blob: https:; font-src data: https:; connect-src https:; worker-src blob:"
-  : "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; worker-src blob:") + '"><script>' + SHIMJS + ERRJS + '<\/script>';
+const ERRJS = 'addEventListener("error",function(e){parent.postMessage({xerr:e.message+" ("+(e.lineno||0)+")"},"*")});addEventListener("securitypolicyviolation",function(e){parent.postMessage({xerr:"CSP заблокував: "+e.blockedURI+" ("+e.violatedDirective+")",vd:e.violatedDirective,bu:e.blockedURI},"*")});addEventListener("unhandledrejection",function(e){parent.postMessage({xerr:"Promise: "+e.reason},"*")});';
+const cspFor = (net, allow = []) => {
+  const d = net
+    ? { 'default-src': ["'none'"], 'script-src': ["'unsafe-inline'", "'unsafe-eval'", 'blob:', 'data:', 'https:'], 'style-src': ["'unsafe-inline'", 'https:'], 'img-src': ['data:', 'blob:', 'https:'], 'media-src': ['data:', 'blob:', 'https:'], 'font-src': ['data:', 'https:'], 'connect-src': ['https:', 'blob:', 'data:'], 'worker-src': ['blob:'] }
+    : { 'default-src': ["'none'"], 'script-src': ["'unsafe-inline'", "'unsafe-eval'", 'blob:', 'data:'], 'style-src': ["'unsafe-inline'"], 'img-src': ['data:', 'blob:'], 'media-src': ['data:', 'blob:'], 'font-src': ['data:'], 'connect-src': ['blob:', 'data:'], 'worker-src': ['blob:'] };
+  allow.forEach(([dir, o]) => { (d[dir] ||= []).push(o); });
+  return '<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + Object.entries(d).map(([k, v]) => k + ' ' + v.join(' ')).join('; ') + '"><script>' + ERRJS + '<\/script>';
+};
 const SHIM = '(function(){function mk(init,save){var d={};for(var k in init)d[k]=init[k];var api={getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[k]=String(v);save(d)},removeItem:function(k){delete d[k];save(d)},clear:function(){d={};save(d)},key:function(i){var a=Object.keys(d);return a[i]===undefined?null:a[i]}};return new Proxy(api,{get:function(t,k){if(k==="length")return Object.keys(d).length;if(k in t)return t[k];return Object.prototype.hasOwnProperty.call(d,k)?d[k]:undefined},set:function(t,k,v){d[k]=String(v);save(d);return true},deleteProperty:function(t,k){delete d[k];save(d);return true},has:function(t,k){return k in t||k in d},ownKeys:function(){return Object.keys(d)},getOwnPropertyDescriptor:function(t,k){return k in d?{value:d[k],enumerable:true,configurable:true,writable:true}:undefined}})}var L=mk(window.__LS||{},function(d){parent.postMessage({xls:JSON.stringify(d)},"*")}),S=mk({},function(){});try{window.localStorage.getItem("x")}catch(e){try{Object.defineProperty(window,"localStorage",{configurable:true,get:function(){return L}});Object.defineProperty(window,"sessionStorage",{configurable:true,get:function(){return S}})}catch(e2){}}})();';
-function withCsp(h, ls, net = EXEC_NET) {
-  const pre = cspFor(net) + '<script>window.__LS=' + JSON.stringify(ls || {}).replace(/</g, '\\u003c') + ';' + SHIM + '<\/script>';
+function withCsp(h, ls, net = EXEC_NET, allow = []) {
+  const pre = cspFor(net, allow) + '<script>window.__LS=' + JSON.stringify(ls || {}).replace(/</g, '\\u003c') + ';' + SHIM + '<\/script>';
   const m = h.match(/<head(?:\s[^>]*)?>/i);
   if (m) return h.replace(m[0], () => m[0] + pre);
   const d = h.match(/^\s*<!doctype[^>]*>/i);
@@ -268,7 +272,17 @@ addEventListener('resize', () => desk.querySelectorAll('.xwin').forEach(clampWin
 const xlog = [];
 addEventListener('message', e => {
   if (e.data?.xls) { desk.querySelectorAll('.xwin').forEach(w => { if (w.querySelector('iframe').contentWindow === e.source) try { localStorage.setItem('xs:' + w._key, String(e.data.xls).slice(0, 500000)); } catch {} }); return; }
-  if (!e.data?.xerr) return; desk.querySelectorAll('.xwin').forEach(w => { if (w.querySelector('iframe').contentWindow === e.source) { const x = w.querySelector('.xerr'); x.hidden = false; x.textContent = '⚠ ' + String(e.data.xerr).slice(0, 300); xlog.push(w._name + ': ' + String(e.data.xerr).slice(0, 200)); if (xlog.length > 20) xlog.shift(); } }); });
+  if (!e.data?.xerr) return; desk.querySelectorAll('.xwin').forEach(w => { if (w.querySelector('iframe').contentWindow === e.source) { const x = w.querySelector('.xerr'); x.hidden = false; x.textContent = '⚠ ' + String(e.data.xerr).slice(0, 300);
+    if (e.data.vd && e.data.bu && !w._net) {   // кнопка точкового дозволу: лише цей сайт і лише ця директива
+      let o = ''; try { const u = new URL(e.data.bu); if (/^https?:$/.test(u.protocol)) o = u.origin; } catch {}
+      const dir = String(e.data.vd).replace(/-(elem|attr)$/, '');
+      if (o && !w._allow.some(([dd, oo]) => dd === dir && oo === o)) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'ghost'; b.style.cssText = 'padding:1px 8px;font-size:12px;margin-left:6px';
+        b.textContent = 'Дозволити лише ' + new URL(o).host;
+        b.onclick = () => { if (!confirm('Дозволити цьому вікну (' + dir + ') звертатись до ' + o + '?\nКод зможе надсилати туди дані.')) return; w._allow.push([dir, o]); w._run(); };
+        x.append(' ', b);
+      }
+    } xlog.push(w._name + ': ' + String(e.data.xerr).slice(0, 200)); if (xlog.length > 20) xlog.shift(); } }); });
 function createWin(code, name, o = {}) {
   const w = document.createElement('div'); w.className = 'xwin';
   w.innerHTML = '<div class="xbar"><span class="xt"></span><span class="xbtn"><button type="button" class="xc" title="Копіювати код">⧉</button><button type="button" class="xr" title="Перезапустити">↻</button><button type="button" class="xw" title="Дозволити інтернет цьому вікну (CDN, fetch, модулі з https)">🌐</button><button type="button" class="xo" title="Відкрити без обмежень у новій вкладці">↗</button><button type="button" class="xn" title="Згорнути">—</button><button type="button" class="xm" title="Розгорнути / відновити">▢</button><button type="button" class="xx" title="Закрити">✕</button></span></div><iframe title="HTML-вікно"></iframe><div class="xerr" hidden></div>'
@@ -281,11 +295,11 @@ function createWin(code, name, o = {}) {
   const run = () => {
     q('.xerr').hidden = true;
     let ls = {}; try { ls = JSON.parse(localStorage.getItem('xs:' + w._key) || '{}'); } catch {}
-    const html = withCsp(code, ls, w._net);
+    const html = withCsp(code, ls, w._net, w._allow);
     if (EXEC_DATA && !dataBlocked && html.length < 1_400_000) { fr.removeAttribute('srcdoc'); fr.src = 'data:text/html;charset=utf-8;base64,' + toB64(new TextEncoder().encode(html)); w._data = true; }
     else { fr.removeAttribute('src'); fr.srcdoc = html; w._data = false; }
   };
-  w._run = run; w._code = code; w._name = name; w._net = EXEC_NET; w._key = [...code].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36) + code.length;
+  w._run = run; w._code = code; w._name = name; w._net = EXEC_NET; w._allow = []; w._key = [...code].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36) + code.length;
   const tb = document.createElement('button'); tb.type = 'button'; tb.className = 'tb'; tb.textContent = name; tb._w = w; tray.appendChild(tb); tray.hidden = false;
   const restore = () => { w.classList.remove('min'); if (w._lazy) { w._lazy = false; run(); } focusWin(w); };
   const minimize = () => { w.classList.add('min'); w.classList.remove('act'); tb.classList.remove('on'); };
